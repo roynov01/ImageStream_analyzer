@@ -1,0 +1,39 @@
+# Python environments
+venv/
+env/
+ENV/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (large files)
+*.tiff
+*.tif
+*.ome.tiff
+*.h5ad
+*.h5
+data/
+output/
+
+# Logs
+*.log
