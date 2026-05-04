@@ -207,6 +207,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.adata = None
         self.coords = None
         self.feat_coords = None
+        self.feat_coords_nn = None
+        self.feat_mean = None
+        self.feat_std = None
         self.nn_umap = None
         self.nn_feat = None
         self.selection_marker_umap = None
@@ -415,12 +418,19 @@ class MainWindow(QtWidgets.QMainWindow):
         y_name = self.y_feature_combo.currentText().strip()
         if x_name not in self.display_df.columns or y_name not in self.display_df.columns:
             self.feat_coords = None
+            self.feat_coords_nn = None
+            self.feat_mean = None
+            self.feat_std = None
             self.nn_feat = None
             return
         xvals = pd.to_numeric(self.display_df[x_name], errors='coerce').fillna(0).values.astype(np.float32)
         yvals = pd.to_numeric(self.display_df[y_name], errors='coerce').fillna(0).values.astype(np.float32)
         self.feat_coords = np.column_stack([xvals, yvals])
-        self.nn_feat = NearestNeighbors(n_neighbors=1).fit(self.feat_coords)
+        self.feat_mean = np.array([float(np.mean(xvals)), float(np.mean(yvals))], dtype=np.float32)
+        self.feat_std = np.array([float(np.std(xvals)), float(np.std(yvals))], dtype=np.float32)
+        self.feat_std = np.where(self.feat_std <= 1e-9, 1.0, self.feat_std)
+        self.feat_coords_nn = (self.feat_coords - self.feat_mean) / self.feat_std
+        self.nn_feat = NearestNeighbors(n_neighbors=1).fit(self.feat_coords_nn)
 
     def _draw_umap_scatter(self):
         if self.coords is None:
@@ -544,17 +554,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.inaxes == self.ax_umap and self.nn_umap is not None:
             self._maybe_select_nearest(self.coords, self.nn_umap, x, y, self.ax_umap)
         elif event.inaxes == self.ax_feat and self.nn_feat is not None:
-            self._maybe_select_nearest(self.feat_coords, self.nn_feat, x, y, self.ax_feat)
+            self._maybe_select_nearest(self.feat_coords_nn, self.nn_feat, x, y, self.ax_feat, transform='feature')
 
-    def _maybe_select_nearest(self, coords, nn_model, x, y, axis):
+    def _maybe_select_nearest(self, coords, nn_model, x, y, axis, transform=None):
         if coords is None or nn_model is None:
             return
+        if transform == 'feature' and self.feat_mean is not None and self.feat_std is not None:
+            x = (float(x) - float(self.feat_mean[0])) / float(self.feat_std[0])
+            y = (float(y) - float(self.feat_mean[1])) / float(self.feat_std[1])
         dist, idx = nn_model.kneighbors([[x, y]], return_distance=True)
         nearest_dist = float(dist[0][0])
-        x_min, x_max = axis.get_xlim()
-        y_min, y_max = axis.get_ylim()
-        span = max(abs(x_max - x_min), abs(y_max - y_min), 1e-9)
-        threshold = span * 0.08
+        if transform == 'feature':
+            threshold = 0.45
+        else:
+            x_min, x_max = axis.get_xlim()
+            y_min, y_max = axis.get_ylim()
+            span = max(abs(x_max - x_min), abs(y_max - y_min), 1e-9)
+            threshold = span * 0.08
         if nearest_dist > threshold:
             return
         self._select_index(int(idx[0][0]))
@@ -602,7 +618,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.img_axes[0].set_title('BF')
         self.img_axes[1].clear()
         self.img_axes[1].imshow(dapi_disp, cmap='gray')
-        self.img_axes[1].set_title(f'DAPI ({self.dapi_min_slider.value()/100.0:.2f}x-{self.dapi_max_slider.value()/100.0:.2f}x)')
+        self.img_axes[1].set_title('DAPI')
         self.img_axes[2].clear()
         self.img_axes[2].imshow(np.array(overlay))
         self.img_axes[2].set_title('Overlay')
@@ -661,7 +677,6 @@ class MainWindow(QtWidgets.QMainWindow):
         overlay_img.save(str(overlay_tif))
 
         self.log(f'[EXPORT] Saved images for {obj} to {out_dir}')
-        QtWidgets.QMessageBox.information(self, 'Saved', f'Saved images for {obj} to {out_dir}')
 
     def save_adata(self):
         if self.adata is None:
@@ -673,7 +688,6 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.adata.write_h5ad(str(out_file))
             self.log(f'[EXPORT] Saved AnnData to {out_file}')
-            QtWidgets.QMessageBox.information(self, 'Saved', f'Saved AnnData to {out_file}')
         except Exception as e:
             self.log(f'[ERROR] Saving AnnData failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'Save error', str(e))
