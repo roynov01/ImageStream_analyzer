@@ -204,8 +204,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fig = Figure(figsize=(10, 6))
         self.canvas = FigureCanvas(self.fig)
         plots_layout.addWidget(self.canvas)
-        self.ax_umap = self.fig.add_subplot(1, 2, 1)
-        self.ax_feat = self.fig.add_subplot(1, 2, 2)
+        self.plot_grid = self.fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.06], wspace=0.25)
+        self.ax_umap = self.fig.add_subplot(self.plot_grid[0, 0])
+        self.ax_feat = self.fig.add_subplot(self.plot_grid[0, 1])
+        self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
+        self.colorbar_ax.set_axis_off()
         self.canvas.mpl_connect('button_press_event', self.on_click)
 
         # Status / log panel (right side only)
@@ -242,8 +245,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return ''
         safe = re.sub(r'\s+', '_', raw)
         return f'{safe}_'
-        self.dapi_min_scale = 0.0
-        self.dapi_max_scale = 1.0
 
     def load_data(self):
         self.log('[LOADING DATA] Starting')
@@ -270,13 +271,32 @@ class MainWindow(QtWidgets.QMainWindow):
     def _rename_feature_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         rename_map = {}
         used = set(df.columns)
+        channel_aliases = {}
+        for raw_key, friendly in self.channel_map.items():
+            key = raw_key.lower()
+            channel_aliases[key] = friendly
+            if key.startswith('ch'):
+                digits = key[2:]
+                if digits.isdigit():
+                    channel_aliases[f'm{int(digits):02d}'] = friendly
+                    channel_aliases[f'm{int(digits)}'] = friendly
+        channel_aliases.setdefault('m01', 'BF')
+        channel_aliases.setdefault('m1', 'BF')
+        channel_aliases.setdefault('m07', 'DAPI')
+        channel_aliases.setdefault('m7', 'DAPI')
+        channel_aliases.setdefault('ch1', 'BF')
+        channel_aliases.setdefault('ch7', 'DAPI')
         for col in list(df.columns):
             if col == 'Object Number' or col.endswith('_path'):
                 continue
             new_col = col
-            new_col = new_col.replace('M07_DAPI', 'DAPI')
-            new_col = new_col.replace('_M1', '_BF')
-            new_col = new_col.replace(' M07 DAPI', ' DAPI')
+            for alias, friendly in channel_aliases.items():
+                pattern = re.compile(rf'(^|[^0-9A-Za-z]){re.escape(alias)}(?=$|[^0-9A-Za-z])', re.IGNORECASE)
+
+                def _sub(match):
+                    return f'{match.group(1)}{friendly}'
+
+                new_col = pattern.sub(_sub, new_col)
             new_col = re.sub(r'\s+', ' ', new_col).strip()
             if new_col != col:
                 candidate = new_col
@@ -468,6 +488,9 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
             self.colorbar = None
+        if self.colorbar_ax is not None:
+            self.colorbar_ax.clear()
+            self.colorbar_ax.set_axis_off()
 
         if self.color_chk.isChecked():
             feat_name = self.color_combo.currentText().strip()
@@ -490,7 +513,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     picker=True,
                 )
                 try:
-                    self.colorbar = self.fig.colorbar(sca, ax=self.ax_umap, label=feat_name)
+                    self.colorbar_ax.set_axis_on()
+                    self.colorbar = self.fig.colorbar(sca, cax=self.colorbar_ax)
+                    self.colorbar.set_label(feat_name)
                 except Exception:
                     self.colorbar = None
                 return sca
@@ -518,7 +543,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.umap_scatter = self._draw_umap_scatter()
         self.feat_scatter = self._draw_feature_scatter()
         self.ax_umap.set_title('UMAP')
-        self.fig.tight_layout(pad=1.0)
+        self.ax_umap.set_box_aspect(1)
+        self.ax_feat.set_box_aspect(1)
+        self.fig.subplots_adjust(left=0.06, right=0.98, bottom=0.12, top=0.92, wspace=0.25)
 
         if self.current_index is not None:
             self._draw_selection_markers()
