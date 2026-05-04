@@ -72,6 +72,11 @@ class MainWindow(QtWidgets.QMainWindow):
         data_grid.addWidget(self.output_path, 3, 1)
         data_grid.addWidget(out_browse, 3, 2)
 
+        data_grid.addWidget(QtWidgets.QLabel('Name prefix:'), 4, 0)
+        self.name_prefix = QtWidgets.QLineEdit('')
+        self.name_prefix.setPlaceholderText('optional')
+        data_grid.addWidget(self.name_prefix, 4, 1, 1, 2)
+
         # Main content split: left (controls + images), right (plots + log)
         body_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         layout.addWidget(body_splitter, stretch=1)
@@ -143,25 +148,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.y_feature_combo.setEnabled(False)
         controls_grid.addWidget(self.y_feature_combo, 6, 1, 1, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('DAPI min:'), 7, 0)
+        self.x_log_chk = QtWidgets.QCheckBox('Log X')
+        self.x_log_chk.setChecked(False)
+        controls_grid.addWidget(self.x_log_chk, 7, 0)
+
+        self.y_log_chk = QtWidgets.QCheckBox('Log Y')
+        self.y_log_chk.setChecked(False)
+        controls_grid.addWidget(self.y_log_chk, 7, 1)
+
+        controls_grid.addWidget(QtWidgets.QLabel('DAPI min:'), 8, 0)
         self.dapi_min_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.dapi_min_slider.setMinimum(0)
         self.dapi_min_slider.setMaximum(200)
         self.dapi_min_slider.setValue(0)
         self.dapi_min_slider.setTickInterval(10)
-        controls_grid.addWidget(self.dapi_min_slider, 7, 1)
+        controls_grid.addWidget(self.dapi_min_slider, 8, 1)
         self.dapi_min_label = QtWidgets.QLabel('0.00x')
-        controls_grid.addWidget(self.dapi_min_label, 7, 2)
+        controls_grid.addWidget(self.dapi_min_label, 8, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('DAPI max:'), 8, 0)
+        controls_grid.addWidget(QtWidgets.QLabel('DAPI max:'), 9, 0)
         self.dapi_max_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.dapi_max_slider.setMinimum(10)
         self.dapi_max_slider.setMaximum(500)
         self.dapi_max_slider.setValue(100)
         self.dapi_max_slider.setTickInterval(10)
-        controls_grid.addWidget(self.dapi_max_slider, 8, 1)
+        controls_grid.addWidget(self.dapi_max_slider, 9, 1)
         self.dapi_max_label = QtWidgets.QLabel('1.00x')
-        controls_grid.addWidget(self.dapi_max_label, 8, 2)
+        controls_grid.addWidget(self.dapi_max_label, 9, 2)
         self._update_dapi_window_labels()
 
         # wire color controls
@@ -170,6 +183,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p99_chk.stateChanged.connect(lambda _: self.update_umap_colors())
         self.x_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
         self.y_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
+        self.x_log_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
+        self.y_log_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
         self.dapi_min_slider.valueChanged.connect(self._on_dapi_window_changed)
         self.dapi_max_slider.valueChanged.connect(self._on_dapi_window_changed)
 
@@ -220,6 +235,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.colorbar = None
         self.display_df = None
         self.dapi_scale = None
+
+    def _feature_prefix(self) -> str:
+        raw = self.name_prefix.text().strip()
+        if not raw:
+            return ''
+        safe = re.sub(r'\s+', '_', raw)
+        return f'{safe}_'
         self.dapi_min_scale = 0.0
         self.dapi_max_scale = 1.0
 
@@ -425,6 +447,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         xvals = pd.to_numeric(self.display_df[x_name], errors='coerce').fillna(0).values.astype(np.float32)
         yvals = pd.to_numeric(self.display_df[y_name], errors='coerce').fillna(0).values.astype(np.float32)
+        if self.x_log_chk.isChecked():
+            xvals = np.log1p(np.clip(xvals, 0, None))
+        if self.y_log_chk.isChecked():
+            yvals = np.log1p(np.clip(yvals, 0, None))
         self.feat_coords = np.column_stack([xvals, yvals])
         self.feat_mean = np.array([float(np.mean(xvals)), float(np.mean(yvals))], dtype=np.float32)
         self.feat_std = np.array([float(np.std(xvals)), float(np.std(yvals))], dtype=np.float32)
@@ -477,8 +503,10 @@ class MainWindow(QtWidgets.QMainWindow):
         x_name = self.x_feature_combo.currentText().strip()
         y_name = self.y_feature_combo.currentText().strip()
         sca = self.ax_feat.scatter(self.feat_coords[:, 0], self.feat_coords[:, 1], s=14, c='0.35', alpha=0.9, picker=True)
-        self.ax_feat.set_xlabel(x_name)
-        self.ax_feat.set_ylabel(y_name)
+        x_label = f'log1p({x_name})' if self.x_log_chk.isChecked() else x_name
+        y_label = f'log1p({y_name})' if self.y_log_chk.isChecked() else y_name
+        self.ax_feat.set_xlabel(x_label)
+        self.ax_feat.set_ylabel(y_label)
         self.ax_feat.set_title(f'{x_name} vs {y_name}')
         return sca
 
@@ -633,6 +661,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         out_dir = Path(self.output_path.text())
         out_dir.mkdir(parents=True, exist_ok=True)
+        prefix = self._feature_prefix()
         i = int(self.current_index)
         row = self.display_df.iloc[i]
         obj = str(row.get('Object Number'))
@@ -662,19 +691,13 @@ class MainWindow(QtWidgets.QMainWindow):
         overlay_img = overlay_images(bf, dapi, alpha=0.85, dapi_min=dapi_min, dapi_max=dapi_max)
 
         # save PNG and TIFF
-        bf_png = out_dir / f'{obj}_BF.png'
-        bf_tif = out_dir / f'{obj}_BF.tif'
-        dapi_png = out_dir / f'{obj}_DAPI.png'
-        dapi_tif = out_dir / f'{obj}_DAPI.tif'
-        overlay_png = out_dir / f'{obj}_overlay.png'
-        overlay_tif = out_dir / f'{obj}_overlay.tif'
+        bf_png = out_dir / f'{prefix}{obj}_BF.png'
+        dapi_png = out_dir / f'{prefix}{obj}_DAPI.png'
+        overlay_png = out_dir / f'{prefix}{obj}_overlay.png'
 
         bf_img.save(str(bf_png))
-        bf_img.save(str(bf_tif))
         dapi_img.save(str(dapi_png))
-        dapi_img.save(str(dapi_tif))
         overlay_img.save(str(overlay_png))
-        overlay_img.save(str(overlay_tif))
 
         self.log(f'[EXPORT] Saved images for {obj} to {out_dir}')
 
@@ -684,7 +707,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         out_dir = Path(self.output_path.text())
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / 'adata.h5ad'
+        prefix = self._feature_prefix()
+        out_file = out_dir / f'{prefix}adata.h5ad'
         try:
             self.adata.write_h5ad(str(out_file))
             self.log(f'[EXPORT] Saved AnnData to {out_file}')
