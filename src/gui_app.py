@@ -1,4 +1,5 @@
 """PyQt6 GUI application for ImageStream analysis."""
+import argparse
 import re
 import sys
 from datetime import datetime
@@ -17,9 +18,27 @@ from .data_loader import index_images, load_channel_map, load_features_table
 from .image_io import load_image, normalize_image, overlay_images, subtract_background
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description='ImageStream analysis GUI')
+    parser.add_argument('--images', dest='images_path', default=r'C:\Users\royno\Desktop\test\65_imaages\All', help='Folder containing image files')
+    parser.add_argument('--features', dest='features_path', default='data/6_65_allstains_1.txt', help='Features TXT/TSV file')
+    parser.add_argument('--channel-map', dest='channel_map_path', default='data/channel_map.json', help='Channel map JSON file')
+    parser.add_argument('--output', dest='output_path', default='data/output', help='Output folder')
+    parser.add_argument('--name-prefix', dest='name_prefix', default='', help='Prefix to use for exported files')
+    parser.add_argument('--x-axis', dest='x_feature', default='', help='Default feature for the X axis scatter plot')
+    parser.add_argument('--y-axis', dest='y_feature', default='', help='Default feature for the Y axis scatter plot')
+    parser.add_argument('--autoload', dest='autoload', action='store_true', help='Load the selected files immediately when the GUI opens')
+    parser.add_argument('--no-autoload', dest='autoload', action='store_false', help='Open the GUI without loading data')
+    parser.set_defaults(autoload=True)
+    return parser.parse_args(argv)
+
+
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
+    def __init__(self, startup_config=None):
         super().__init__()
+        self.startup_config = startup_config or {}
+        self.startup_x_feature = self.startup_config.get('x_feature', '').strip()
+        self.startup_y_feature = self.startup_config.get('y_feature', '').strip()
         self.setWindowTitle('ImageStream Analysis')
         self.resize(1400, 900)
 
@@ -76,6 +95,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.name_prefix = QtWidgets.QLineEdit('')
         self.name_prefix.setPlaceholderText('optional')
         data_grid.addWidget(self.name_prefix, 4, 1, 1, 2)
+
+        self._apply_startup_config()
 
         # Main content split: left (controls + images), right (plots + log)
         body_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -239,6 +260,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.display_df = None
         self.dapi_scale = None
 
+    def _apply_startup_config(self):
+        if not self.startup_config:
+            return
+        if self.startup_config.get('features_path'):
+            self.features_path.setText(self.startup_config['features_path'])
+        if self.startup_config.get('images_path'):
+            self.images_path.setText(self.startup_config['images_path'])
+        if self.startup_config.get('channel_map_path'):
+            self.channel_map_path.setText(self.startup_config['channel_map_path'])
+        if self.startup_config.get('output_path'):
+            self.output_path.setText(self.startup_config['output_path'])
+        if self.startup_config.get('name_prefix') is not None:
+            self.name_prefix.setText(self.startup_config['name_prefix'])
+
     def _feature_prefix(self) -> str:
         raw = self.name_prefix.text().strip()
         if not raw:
@@ -339,6 +374,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # default feature scatter: Area BF vs DAPI intensity when available
         x_default = self._find_feature_name(['Area', 'BF'])
         y_default = self._find_feature_name(['DAPI', 'Intensity'])
+        if self.startup_x_feature:
+            x_default = self.startup_x_feature if self.startup_x_feature in feature_cols else x_default
+        if self.startup_y_feature:
+            y_default = self.startup_y_feature if self.startup_y_feature in feature_cols else y_default
         if x_default is not None:
             self.x_feature_combo.setCurrentText(x_default)
         if y_default is not None:
@@ -489,39 +528,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coords is None:
             return None
 
-        self.colorbar = None
-        if self.colorbar_ax is None or self.colorbar_ax.figure is None:
-            self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
-        self.colorbar_ax.clear()
-        self.colorbar_ax.set_axis_off()
-
-        if self.color_chk.isChecked():
-            feat_name = self.color_combo.currentText().strip()
-            if feat_name and feat_name in self.display_df.columns:
-                vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
-                vmax = None
-                if self.p99_chk.isChecked():
-                    try:
-                        vmax = float(np.nanpercentile(vals, 99))
-                    except Exception:
-                        vmax = None
-                sca = self.ax_umap.scatter(
-                    self.coords[:, 0],
-                    self.coords[:, 1],
-                    c=vals,
-                    s=16,
-                    cmap='viridis',
-                    vmin=0,
-                    vmax=vmax,
-                    picker=True,
-                )
-                try:
-                    self.colorbar_ax.set_axis_on()
-                    self.colorbar = self.fig.colorbar(sca, cax=self.colorbar_ax)
-                    self.colorbar.set_label(feat_name)
-                except Exception:
-                    self.colorbar = None
-                return sca
+        vals, feat_name, vmax = self._get_color_feature_values()
+        if vals is not None:
+            sca = self.ax_umap.scatter(
+                self.coords[:, 0],
+                self.coords[:, 1],
+                c=vals,
+                s=16,
+                cmap='viridis',
+                vmin=0,
+                vmax=vmax,
+                picker=True,
+            )
+            self._draw_colorbar(sca, feat_name)
+            return sca
 
         return self.ax_umap.scatter(self.coords[:, 0], self.coords[:, 1], s=16, c='C0', picker=True)
 
@@ -530,13 +550,56 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         x_name = self.x_feature_combo.currentText().strip()
         y_name = self.y_feature_combo.currentText().strip()
-        sca = self.ax_feat.scatter(self.feat_coords[:, 0], self.feat_coords[:, 1], s=14, c='0.35', alpha=0.9, picker=True)
+        vals, _, vmax = self._get_color_feature_values()
+        if vals is not None:
+            sca = self.ax_feat.scatter(
+                self.feat_coords[:, 0],
+                self.feat_coords[:, 1],
+                c=vals,
+                s=14,
+                cmap='viridis',
+                vmin=0,
+                vmax=vmax,
+                alpha=0.9,
+                picker=True,
+            )
+        else:
+            sca = self.ax_feat.scatter(self.feat_coords[:, 0], self.feat_coords[:, 1], s=14, c='0.35', alpha=0.9, picker=True)
         x_label = f'log1p({x_name})' if self.x_log_chk.isChecked() else x_name
         y_label = f'log1p({y_name})' if self.y_log_chk.isChecked() else y_name
         self.ax_feat.set_xlabel(x_label)
         self.ax_feat.set_ylabel(y_label)
         self.ax_feat.set_title(f'{x_name} vs {y_name}')
         return sca
+
+    def _get_color_feature_values(self):
+        if not self.color_chk.isChecked() or self.display_df is None:
+            return None, None, None
+        feat_name = self.color_combo.currentText().strip()
+        if not feat_name or feat_name not in self.display_df.columns:
+            return None, None, None
+        vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
+        vmax = None
+        if self.p99_chk.isChecked():
+            try:
+                vmax = float(np.nanpercentile(vals, 99))
+            except Exception:
+                vmax = None
+        return vals, feat_name, vmax
+
+    def _draw_colorbar(self, mappable, feat_name):
+        self.colorbar = None
+        if self.colorbar_ax is None or self.colorbar_ax.figure is None:
+            self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
+        self.colorbar_ax.clear()
+        self.colorbar_ax.set_axis_off()
+        if feat_name:
+            try:
+                self.colorbar_ax.set_axis_on()
+                self.colorbar = self.fig.colorbar(mappable, cax=self.colorbar_ax)
+                self.colorbar.set_label(feat_name)
+            except Exception:
+                self.colorbar = None
 
     def _redraw_plots(self):
         if self.coords is None:
@@ -747,10 +810,22 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, 'Save error', str(e))
 
 
-def run_app():
+def run_app(argv=None):
+    args = parse_args(argv)
+    startup_config = {
+        'features_path': args.features_path,
+        'images_path': args.images_path,
+        'channel_map_path': args.channel_map_path,
+        'output_path': args.output_path,
+        'name_prefix': args.name_prefix,
+        'x_feature': args.x_feature,
+        'y_feature': args.y_feature,
+    }
     app = QtWidgets.QApplication(sys.argv)
-    win = MainWindow()
+    win = MainWindow(startup_config=startup_config)
     win.showMaximized()
+    if args.autoload:
+        win.load_data()
     sys.exit(app.exec())
 
 
