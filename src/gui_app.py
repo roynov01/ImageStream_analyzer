@@ -252,10 +252,12 @@ class MainWindow(QtWidgets.QMainWindow):
         imgs = Path(self.images_path.text())
         cmap = Path(self.channel_map_path.text())
         channel_map = load_channel_map(cmap)
+        # ensure channel_map is available as an attribute before any method
+        # that may reference it (e.g. _rename_feature_columns)
+        self.channel_map = channel_map
         df = load_features_table(feats)
         df = index_images(imgs, df, channel_map)
         df = self._rename_feature_columns(df)
-        self.channel_map = channel_map
         # filter to only rows that have at least one channel path
         path_cols = [str(ch) + '_path' for ch in channel_map.values()]
         available_mask = df[path_cols].notna().any(axis=1)
@@ -298,6 +300,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 new_col = pattern.sub(_sub, new_col)
             new_col = re.sub(r'\s+', ' ', new_col).strip()
+            for friendly in sorted(set(channel_aliases.values()) | {'BF', 'DAPI'}, key=len, reverse=True):
+                dup_pattern = re.compile(
+                    rf'(?i)(?:(?<=^)|(?<=[_\s-])){re.escape(friendly)}(?:[_\s-]+{re.escape(friendly)})+'
+                )
+                new_col = dup_pattern.sub(friendly, new_col)
             if new_col != col:
                 candidate = new_col
                 suffix = 2
@@ -482,15 +489,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coords is None:
             return None
 
-        if self.colorbar is not None:
-            try:
-                self.colorbar.remove()
-            except Exception:
-                pass
-            self.colorbar = None
-        if self.colorbar_ax is not None:
-            self.colorbar_ax.clear()
-            self.colorbar_ax.set_axis_off()
+        self.colorbar = None
+        if self.colorbar_ax is None or self.colorbar_ax.figure is None:
+            self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
+        self.colorbar_ax.clear()
+        self.colorbar_ax.set_axis_off()
 
         if self.color_chk.isChecked():
             feat_name = self.color_combo.currentText().strip()
