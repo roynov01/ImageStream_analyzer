@@ -148,13 +148,16 @@ class MainWindow(QtWidgets.QMainWindow):
         channel_map = load_channel_map(cmap)
         df = load_features_table(feats)
         df = index_images(imgs, df, channel_map)
-        self.df = df
         self.channel_map = channel_map
-        # count available image paths
-        found_counts = 0
-        for ch_name in channel_map.values():
-            found_counts += df[str(ch_name) + '_path'].notna().sum()
-        self.log(f'[LOADED] {len(df)} objects; total channel paths found: {found_counts}')
+        # filter to only rows that have at least one channel path
+        path_cols = [str(ch) + '_path' for ch in channel_map.values()]
+        available_mask = df[path_cols].notna().any(axis=1)
+        df_filtered = df[available_mask].reset_index(drop=True)
+        # count available image paths and rows
+        found_counts = int(df_filtered[path_cols].notna().sum().sum())
+        rows_with_images = int(df_filtered.shape[0])
+        self.df = df_filtered
+        self.log(f'[LOADED] {len(df)} objects; {rows_with_images} objects have at least one image; total channel paths found: {found_counts}')
         self.feature_list.clear()
         for c in df.columns:
             if c.endswith('_path'):
@@ -163,12 +166,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             self.feature_list.addItem(c)
         # do not popup; just log
-        # populate color combo
+        # populate color combo with filtered dataframe columns and enable controls
         self.color_combo.clear()
-        for c in df.columns:
+        for c in self.df.columns:
             if c.endswith('_path') or c == 'Object Number':
                 continue
             self.color_combo.addItem(c)
+        # enable color controls so user can select feature and p99
+        self.color_combo.setEnabled(True)
+        self.p99_chk.setEnabled(True)
 
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
