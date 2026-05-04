@@ -26,10 +26,15 @@ class MainWindow(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
-        # Top controls
-        controls = QtWidgets.QHBoxLayout()
-        layout.addLayout(controls)
+        # Data source controls at top
+        data_group = QtWidgets.QGroupBox('Data Sources')
+        data_grid = QtWidgets.QGridLayout(data_group)
+        data_grid.setHorizontalSpacing(6)
+        data_grid.setVerticalSpacing(6)
+        layout.addWidget(data_group, stretch=0)
 
         # Path fields with browse buttons
         self.features_path = QtWidgets.QLineEdit('data/6_65_allstains_1.txt')
@@ -48,75 +53,105 @@ class MainWindow(QtWidgets.QMainWindow):
 
         load_btn = QtWidgets.QPushButton('Load Data')
         load_btn.clicked.connect(self.load_data)
+        load_btn.setMinimumHeight(32)
 
-        controls.addWidget(QtWidgets.QLabel('Features:'))
-        controls.addWidget(self.features_path)
-        controls.addWidget(feat_browse)
-        controls.addWidget(QtWidgets.QLabel('Images:'))
-        controls.addWidget(self.images_path)
-        controls.addWidget(img_browse)
-        controls.addWidget(QtWidgets.QLabel('Channel map:'))
-        controls.addWidget(self.channel_map_path)
-        controls.addWidget(cmap_browse)
-        controls.addWidget(QtWidgets.QLabel('Output:'))
-        controls.addWidget(self.output_path)
-        controls.addWidget(out_browse)
-        controls.addWidget(load_btn)
+        data_grid.addWidget(QtWidgets.QLabel('Features:'), 0, 0)
+        data_grid.addWidget(self.features_path, 0, 1)
+        data_grid.addWidget(feat_browse, 0, 2)
+        data_grid.addWidget(load_btn, 0, 3, 2, 1)
 
-        # Feature / plot controls
-        fs_layout = QtWidgets.QHBoxLayout()
-        layout.addLayout(fs_layout)
+        data_grid.addWidget(QtWidgets.QLabel('Images:'), 1, 0)
+        data_grid.addWidget(self.images_path, 1, 1)
+        data_grid.addWidget(img_browse, 1, 2)
+
+        data_grid.addWidget(QtWidgets.QLabel('Channel map:'), 2, 0)
+        data_grid.addWidget(self.channel_map_path, 2, 1)
+        data_grid.addWidget(cmap_browse, 2, 2)
+
+        data_grid.addWidget(QtWidgets.QLabel('Output:'), 3, 0)
+        data_grid.addWidget(self.output_path, 3, 1)
+        data_grid.addWidget(out_browse, 3, 2)
+
+        # Main content split: left (controls + images), right (plots + log)
+        body_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        layout.addWidget(body_splitter, stretch=1)
+
+        left_panel = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+        body_splitter.addWidget(left_panel)
+
+        right_panel = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+        body_splitter.addWidget(right_panel)
+        body_splitter.setSizes([520, 900])
+
+        # Controls card
+        controls_group = QtWidgets.QGroupBox('Analysis Controls')
+        controls_grid = QtWidgets.QGridLayout(controls_group)
+        controls_grid.setHorizontalSpacing(6)
+        controls_grid.setVerticalSpacing(6)
+        controls_grid.setColumnStretch(0, 0)
+        controls_grid.setColumnStretch(1, 1)
+        controls_grid.setColumnStretch(2, 0)
+        left_layout.addWidget(controls_group, stretch=0)
+
+        # Feature selection
         self.feature_list = QtWidgets.QListWidget()
         self.feature_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
-        fs_layout.addWidget(self.feature_list)
+        self.feature_list.setMinimumHeight(170)
+        controls_grid.addWidget(QtWidgets.QLabel('Features for UMAP:'), 0, 0, 1, 3)
+        controls_grid.addWidget(self.feature_list, 1, 0, 1, 3)
 
         umap_btn = QtWidgets.QPushButton('Compute UMAP')
         umap_btn.clicked.connect(self.compute_umap)
-        fs_layout.addWidget(umap_btn)
+        controls_grid.addWidget(umap_btn, 2, 0)
 
-        # Export buttons and selected ID
+        # Export buttons
         self.save_img_btn = QtWidgets.QPushButton('Save Cell Images')
         self.save_img_btn.clicked.connect(self.save_current_cell_images)
         self.save_img_btn.setEnabled(False)
         self.save_adata_btn = QtWidgets.QPushButton('Save AnnData (.h5ad)')
         self.save_adata_btn.clicked.connect(self.save_adata)
         self.save_adata_btn.setEnabled(False)
-        fs_layout.addWidget(self.save_img_btn)
-        fs_layout.addWidget(self.save_adata_btn)
+        controls_grid.addWidget(self.save_img_btn, 2, 1)
+        controls_grid.addWidget(self.save_adata_btn, 2, 2)
 
         # Color options (off by default)
         self.color_chk = QtWidgets.QCheckBox('Color UMAP by feature')
         self.color_chk.setChecked(False)
-        fs_layout.addWidget(self.color_chk)
-        fs_layout.addWidget(QtWidgets.QLabel('Color feature:'))
+        controls_grid.addWidget(self.color_chk, 3, 0, 1, 2)
         self.color_combo = QtWidgets.QComboBox()
         self.color_combo.setEnabled(False)
-        fs_layout.addWidget(self.color_combo)
+        controls_grid.addWidget(QtWidgets.QLabel('Color feature:'), 4, 0)
+        controls_grid.addWidget(self.color_combo, 4, 1, 1, 2)
         self.p99_chk = QtWidgets.QCheckBox('vmax=p99')
         self.p99_chk.setChecked(True)
         self.p99_chk.setEnabled(False)
-        fs_layout.addWidget(self.p99_chk)
+        controls_grid.addWidget(self.p99_chk, 3, 2)
 
-        fs_layout.addWidget(QtWidgets.QLabel('Feature X:'))
+        controls_grid.addWidget(QtWidgets.QLabel('Feature X:'), 5, 0)
         self.x_feature_combo = QtWidgets.QComboBox()
         self.x_feature_combo.setEnabled(False)
-        fs_layout.addWidget(self.x_feature_combo)
+        controls_grid.addWidget(self.x_feature_combo, 5, 1, 1, 2)
 
-        fs_layout.addWidget(QtWidgets.QLabel('Feature Y:'))
+        controls_grid.addWidget(QtWidgets.QLabel('Feature Y:'), 6, 0)
         self.y_feature_combo = QtWidgets.QComboBox()
         self.y_feature_combo.setEnabled(False)
-        fs_layout.addWidget(self.y_feature_combo)
+        controls_grid.addWidget(self.y_feature_combo, 6, 1, 1, 2)
 
-        fs_layout.addWidget(QtWidgets.QLabel('DAPI gain:'))
+        controls_grid.addWidget(QtWidgets.QLabel('DAPI gain:'), 7, 0)
         self.dapi_gain_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.dapi_gain_slider.setMinimum(10)
         self.dapi_gain_slider.setMaximum(300)
         self.dapi_gain_slider.setValue(100)
         self.dapi_gain_slider.setTickInterval(10)
-        self.dapi_gain_slider.setFixedWidth(140)
-        fs_layout.addWidget(self.dapi_gain_slider)
+        controls_grid.addWidget(self.dapi_gain_slider, 7, 1)
         self.dapi_gain_label = QtWidgets.QLabel('1.00x')
-        fs_layout.addWidget(self.dapi_gain_label)
+        controls_grid.addWidget(self.dapi_gain_label, 7, 2)
 
         # wire color controls
         self.color_chk.stateChanged.connect(self._toggle_color_controls)
@@ -126,31 +161,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.y_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
         self.dapi_gain_slider.valueChanged.connect(self._on_dapi_gain_changed)
 
-        # Main body: images on left, plots on right
-        body_layout = QtWidgets.QHBoxLayout()
-        layout.addLayout(body_layout, stretch=1)
-
-        image_panel = QtWidgets.QVBoxLayout()
-        body_layout.addLayout(image_panel, stretch=1)
-        self.img_fig = Figure(figsize=(7, 6))
+        # Image panel: 1 column x 3 rows
+        image_group = QtWidgets.QGroupBox('Selected Cell Images')
+        image_layout = QtWidgets.QVBoxLayout(image_group)
+        left_layout.addWidget(image_group, stretch=1)
+        self.img_fig = Figure(figsize=(5, 8))
         self.img_canvas = FigureCanvas(self.img_fig)
-        image_panel.addWidget(self.img_canvas)
-        self.img_axes = [self.img_fig.add_subplot(1, 3, i + 1) for i in range(3)]
+        image_layout.addWidget(self.img_canvas)
+        self.img_axes = [self.img_fig.add_subplot(3, 1, i + 1) for i in range(3)]
 
-        plot_panel = QtWidgets.QVBoxLayout()
-        body_layout.addLayout(plot_panel, stretch=2)
+        # Plot panel
+        plots_group = QtWidgets.QGroupBox('UMAP and Feature Scatter')
+        plots_layout = QtWidgets.QVBoxLayout(plots_group)
+        right_layout.addWidget(plots_group, stretch=1)
         self.fig = Figure(figsize=(10, 6))
         self.canvas = FigureCanvas(self.fig)
-        plot_panel.addWidget(self.canvas)
+        plots_layout.addWidget(self.canvas)
         self.ax_umap = self.fig.add_subplot(1, 2, 1)
         self.ax_feat = self.fig.add_subplot(1, 2, 2)
         self.canvas.mpl_connect('button_press_event', self.on_click)
 
-        # Status / log panel
+        # Status / log panel (right side only)
+        status_group = QtWidgets.QGroupBox('Status Log')
+        status_layout = QtWidgets.QVBoxLayout(status_group)
+        right_layout.addWidget(status_group, stretch=0)
         self.status_box = QtWidgets.QTextEdit()
         self.status_box.setReadOnly(True)
-        self.status_box.setFixedHeight(100)
-        layout.addWidget(self.status_box)
+        self.status_box.setFixedHeight(120)
+        status_layout.addWidget(self.status_box)
 
         # Internal
         self.df = None
@@ -420,6 +458,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.umap_scatter = self._draw_umap_scatter()
         self.feat_scatter = self._draw_feature_scatter()
         self.ax_umap.set_title('UMAP')
+        self.fig.tight_layout(pad=1.0)
 
         if self.current_index is not None:
             self._draw_selection_markers()
@@ -534,6 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.img_axes[2].set_title('Overlay')
         for ax in self.img_axes:
             ax.axis('off')
+        self.img_fig.tight_layout(pad=0.8)
         self.img_canvas.draw()
 
     def save_current_cell_images(self):
