@@ -90,15 +90,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.selected_label = QtWidgets.QLabel('Selected: None')
         fs_layout.addWidget(self.selected_label)
 
-        # Debug options: sample 100 for UMAP
-        self.sample_debug_chk = QtWidgets.QCheckBox('Debug: sample 100')
-        self.sample_debug_chk.setChecked(True)
-        fs_layout.addWidget(self.sample_debug_chk)
-
         # Color options
-        self.color_chk = QtWidgets.QCheckBox('Color by feature')
-        self.color_chk.setChecked(False)
-        fs_layout.addWidget(self.color_chk)
+        fs_layout.addWidget(QtWidgets.QLabel('Color feature:'))
         self.color_combo = QtWidgets.QComboBox()
         self.color_combo.setEnabled(False)
         fs_layout.addWidget(self.color_combo)
@@ -108,7 +101,6 @@ class MainWindow(QtWidgets.QMainWindow):
         fs_layout.addWidget(self.p99_chk)
 
         # wire color controls
-        self.color_chk.stateChanged.connect(self._toggle_color_controls)
         self.color_combo.currentIndexChanged.connect(lambda _: self.update_umap_colors())
         self.p99_chk.stateChanged.connect(lambda _: self.update_umap_colors())
 
@@ -139,6 +131,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.nn = None
         self.selection_marker = None
         self.current_index = None
+        self.colorbar = None
 
     def load_data(self):
         self.log('[LOADING DATA] Starting')
@@ -175,6 +168,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # enable color controls so user can select feature and p99
         self.color_combo.setEnabled(True)
         self.p99_chk.setEnabled(True)
+        if self.color_combo.count() > 0:
+            self.color_combo.setCurrentIndex(0)
 
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -200,11 +195,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if d:
             self.output_path.setText(d)
 
-    def _toggle_color_controls(self, state):
-        enabled = state == QtCore.Qt.CheckState.Checked
-        self.color_combo.setEnabled(enabled)
-        self.p99_chk.setEnabled(enabled)
-
     def compute_umap(self):
         if self.df is None:
             self.log('[UMAP] No data loaded')
@@ -218,28 +208,14 @@ class MainWindow(QtWidgets.QMainWindow):
         n_samples, n_features = X.shape
         self.log(f'[UMAP] Computing with {n_samples} samples and {n_features} features')
         try:
-            # sampling for debug if enabled
-            if self.sample_debug_chk.isChecked():
-                # sample 100 rows
-                df_sample = self.df.sample(n=min(100, len(self.df)), random_state=42).reset_index().rename(columns={'index': 'orig_index'})
-                X = df_sample[features].fillna(0).values
-                adata = ad.AnnData(X)
-                # attach obs from df_sample
-                adata.obs = pd.DataFrame(index=range(adata.n_obs))
-                adata.obs['Object Number'] = df_sample['Object Number'].values
-                for col in df_sample.columns:
-                    if col.endswith('_path'):
-                        adata.obs[col] = df_sample[col].values
-                self.display_df = df_sample
-            else:
-                adata = ad.AnnData(X)
-                adata.obs = pd.DataFrame(index=range(adata.n_obs))
-                if 'Object Number' in self.df.columns:
-                    adata.obs['Object Number'] = self.df['Object Number'].values
-                for col in self.df.columns:
-                    if col.endswith('_path'):
-                        adata.obs[col] = self.df[col].values
-                self.display_df = self.df.reset_index().rename(columns={'index':'orig_index'})
+            adata = ad.AnnData(X)
+            adata.obs = pd.DataFrame(index=range(adata.n_obs))
+            if 'Object Number' in self.df.columns:
+                adata.obs['Object Number'] = self.df['Object Number'].values
+            for col in self.df.columns:
+                if col.endswith('_path'):
+                    adata.obs[col] = self.df[col].values
+            self.display_df = self.df.reset_index().rename(columns={'index': 'orig_index'})
             
             # choose n_comps safely based on adata
             n_samples = int(adata.n_obs)
@@ -251,19 +227,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.adata = adata
             self.coords = adata.obsm['X_umap']
             self.ax.clear()
-            # color by feature if requested
-            if self.color_chk.isChecked() and self.color_combo.currentText():
-                feat_name = self.color_combo.currentText()
-                vals = self.display_df[feat_name].astype(float).fillna(0).values
-                vmax = None
-                if self.p99_chk.isChecked():
-                    try:
-                        vmax = float(np.nanpercentile(vals, 99))
-                    except Exception:
-                        vmax = None
-                self.scatter = self.ax.scatter(self.coords[:, 0], self.coords[:, 1], c=vals, s=20, cmap='viridis', vmin=0, vmax=vmax)
-            else:
-                self.scatter = self.ax.scatter(self.coords[:, 0], self.coords[:, 1], s=20, c='C0', picker=True)
+            self.scatter = self._draw_umap_scatter()
             self.ax.set_title('UMAP')
             self.canvas.draw()
             # build nearest neighbor index
@@ -275,26 +239,52 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log(f'[ERROR] UMAP failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'UMAP error', str(e))
 
-    def update_umap_colors(self):
-        """Update scatter colors without recomputing UMAP."""
-        if self.coords is None or self.scatter is None:
-            return
-        if self.color_chk.isChecked() and self.color_combo.currentText():
-            feat_name = self.color_combo.currentText()
-            vals = self.display_df[feat_name].astype(float).fillna(0).values
+    def _draw_umap_scatter(self):
+        if self.coords is None:
+            return None
+        feat_name = self.color_combo.currentText().strip()
+        if self.colorbar is not None:
+            try:
+                self.colorbar.remove()
+            except Exception:
+                pass
+            self.colorbar = None
+        if feat_name and feat_name in self.display_df.columns:
+            vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
             vmax = None
             if self.p99_chk.isChecked():
                 try:
                     vmax = float(np.nanpercentile(vals, 99))
                 except Exception:
                     vmax = None
-            # update scatter
-            self.scatter.remove()
-            self.scatter = self.ax.scatter(self.coords[:, 0], self.coords[:, 1], c=vals, s=20, cmap='viridis', vmin=0, vmax=vmax)
-        else:
-            # plain color
-            self.scatter.remove()
-            self.scatter = self.ax.scatter(self.coords[:, 0], self.coords[:, 1], s=20, c='C0', picker=True)
+            scatter = self.ax.scatter(
+                self.coords[:, 0],
+                self.coords[:, 1],
+                c=vals,
+                s=20,
+                cmap='viridis',
+                vmin=0,
+                vmax=vmax,
+                picker=True,
+            )
+            try:
+                self.colorbar = self.fig.colorbar(scatter, ax=self.ax, label=feat_name)
+            except Exception:
+                self.colorbar = None
+            return scatter
+        return self.ax.scatter(self.coords[:, 0], self.coords[:, 1], s=20, c='C0', picker=True)
+
+    def update_umap_colors(self):
+        """Update scatter colors without recomputing UMAP."""
+        if self.coords is None:
+            return
+        selected_index = self.current_index
+        self.ax.clear()
+        self.scatter = self._draw_umap_scatter()
+        if selected_index is not None and 0 <= selected_index < len(self.coords):
+            sel_x, sel_y = float(self.coords[selected_index, 0]), float(self.coords[selected_index, 1])
+            self.selection_marker = self.ax.plot(sel_x, sel_y, marker='o', color='red', markersize=10, markeredgecolor='k', markeredgewidth=1)[0]
+        self.ax.set_title('UMAP')
         self.canvas.draw()
 
     def on_click(self, event):
