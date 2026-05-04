@@ -46,18 +46,49 @@ def index_images(image_folder: Path, df: pd.DataFrame, channel_map: Dict[str, st
         col_name = channel_map[ch_key]
         df[col_name + '_path'] = None
 
+    # attempt multiple filename patterns to be robust to padding/extension differences
+    pad_lengths = [0, 4, 5, 6]
+    exts = ['.ome.tif', '.tif']
     for idx, row in df.iterrows():
-        obj = str(row['Object Number'])
+        raw_obj = row['Object Number']
+        # ensure string form
+        obj_str = str(raw_obj)
         for ch_key, ch_name in channel_map.items():
-            # build filename
-            # example: 0_Ch1.ome.tif
-            fname = f"{obj}_{ch_key}.ome.tif" if ch_key.startswith('Ch') else f"{obj}_{ch_key}.ome.tif"
-            p = image_folder / fname
-            if p.exists():
-                df.at[idx, ch_name + '_path'] = str(p)
-            else:
-                # try without .ome (some files may be .tif)
-                p2 = image_folder / fname.replace('.ome', '')
-                if p2.exists():
-                    df.at[idx, ch_name + '_path'] = str(p2)
+            found = None
+            # try without modification
+            for ext in exts:
+                fname = f"{obj_str}_{ch_key}{ext}"
+                p = image_folder / fname
+                if p.exists():
+                    found = p
+                    break
+            # try int cast (remove decimals)
+            if found is None:
+                try:
+                    obj_int = int(float(raw_obj))
+                    for ext in exts:
+                        fname = f"{obj_int}_{ch_key}{ext}"
+                        p = image_folder / fname
+                        if p.exists():
+                            found = p
+                            break
+                except Exception:
+                    pass
+            # try zero-padded variants
+            if found is None:
+                for pad in pad_lengths:
+                    if pad <= 0:
+                        continue
+                    obj_pad = str(raw_obj).zfill(pad)
+                    for ext in exts:
+                        fname = f"{obj_pad}_{ch_key}{ext}"
+                        p = image_folder / fname
+                        if p.exists():
+                            found = p
+                            break
+                    if found:
+                        break
+
+            if found:
+                df.at[idx, ch_name + '_path'] = str(found)
     return df
