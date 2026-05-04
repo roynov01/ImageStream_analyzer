@@ -70,10 +70,24 @@ def subtract_background(img: np.ndarray, background_percentile: float = 20.0) ->
     return np.clip(img - bg, 0.0, None)
 
 
-def overlay_images(bf: np.ndarray, dapi: np.ndarray, alpha: float = 0.65) -> Image.Image:
-    """Return an RGB PIL Image with BF as grayscale and DAPI as a cyan overlay."""
+def overlay_images(
+    bf: np.ndarray,
+    dapi: np.ndarray,
+    alpha: float = 0.65,
+    dapi_scale: float | None = None,
+    dapi_gain: float = 1.0,
+) -> Image.Image:
+    """Return an RGB image with BF as base and DAPI overlaid in cyan.
+
+    If ``dapi_scale`` is provided, DAPI normalization is fixed across cells:
+    dapi_norm = clip((dapi_bg_subtracted / dapi_scale) * dapi_gain, 0, 1).
+    """
     bf_n = normalize_image(bf)
-    dapi_n = normalize_image(subtract_background(dapi))
+    dapi_bg = subtract_background(dapi)
+    if dapi_scale is not None and np.isfinite(dapi_scale) and dapi_scale > 0:
+        dapi_n = np.clip((dapi_bg / float(dapi_scale)) * float(dapi_gain), 0.0, 1.0)
+    else:
+        dapi_n = np.clip(normalize_image(dapi_bg) * float(dapi_gain), 0.0, 1.0)
 
     h, w = bf_n.shape
     rgb = np.stack([bf_n, bf_n, bf_n], axis=-1)
