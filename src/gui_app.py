@@ -143,15 +143,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.y_feature_combo.setEnabled(False)
         controls_grid.addWidget(self.y_feature_combo, 6, 1, 1, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('DAPI gain:'), 7, 0)
-        self.dapi_gain_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.dapi_gain_slider.setMinimum(10)
-        self.dapi_gain_slider.setMaximum(300)
-        self.dapi_gain_slider.setValue(100)
-        self.dapi_gain_slider.setTickInterval(10)
-        controls_grid.addWidget(self.dapi_gain_slider, 7, 1)
-        self.dapi_gain_label = QtWidgets.QLabel('1.00x')
-        controls_grid.addWidget(self.dapi_gain_label, 7, 2)
+        controls_grid.addWidget(QtWidgets.QLabel('DAPI min:'), 7, 0)
+        self.dapi_min_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dapi_min_slider.setMinimum(0)
+        self.dapi_min_slider.setMaximum(200)
+        self.dapi_min_slider.setValue(0)
+        self.dapi_min_slider.setTickInterval(10)
+        controls_grid.addWidget(self.dapi_min_slider, 7, 1)
+        self.dapi_min_label = QtWidgets.QLabel('0.00x')
+        controls_grid.addWidget(self.dapi_min_label, 7, 2)
+
+        controls_grid.addWidget(QtWidgets.QLabel('DAPI max:'), 8, 0)
+        self.dapi_max_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.dapi_max_slider.setMinimum(10)
+        self.dapi_max_slider.setMaximum(500)
+        self.dapi_max_slider.setValue(100)
+        self.dapi_max_slider.setTickInterval(10)
+        controls_grid.addWidget(self.dapi_max_slider, 8, 1)
+        self.dapi_max_label = QtWidgets.QLabel('1.00x')
+        controls_grid.addWidget(self.dapi_max_label, 8, 2)
+        self._update_dapi_window_labels()
 
         # wire color controls
         self.color_chk.stateChanged.connect(self._toggle_color_controls)
@@ -159,16 +170,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p99_chk.stateChanged.connect(lambda _: self.update_umap_colors())
         self.x_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
         self.y_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
-        self.dapi_gain_slider.valueChanged.connect(self._on_dapi_gain_changed)
+        self.dapi_min_slider.valueChanged.connect(self._on_dapi_window_changed)
+        self.dapi_max_slider.valueChanged.connect(self._on_dapi_window_changed)
 
         # Image panel: 1 column x 3 rows
         image_group = QtWidgets.QGroupBox('Selected Cell Images')
         image_layout = QtWidgets.QVBoxLayout(image_group)
         left_layout.addWidget(image_group, stretch=1)
-        self.img_fig = Figure(figsize=(5, 8))
+        self.img_fig = Figure(figsize=(8, 4))
         self.img_canvas = FigureCanvas(self.img_fig)
         image_layout.addWidget(self.img_canvas)
-        self.img_axes = [self.img_fig.add_subplot(3, 1, i + 1) for i in range(3)]
+        self.img_axes = [self.img_fig.add_subplot(1, 3, i + 1) for i in range(3)]
 
         # Plot panel
         plots_group = QtWidgets.QGroupBox('UMAP and Feature Scatter')
@@ -205,6 +217,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.colorbar = None
         self.display_df = None
         self.dapi_scale = None
+        self.dapi_min_scale = 0.0
+        self.dapi_max_scale = 1.0
 
     def load_data(self):
         self.log('[LOADING DATA] Starting')
@@ -306,6 +320,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
         if vals:
             self.dapi_scale = max(float(np.median(vals)), 1.0)
+            self.dapi_min_slider.setValue(0)
+            self.dapi_max_slider.setValue(100)
+            self._update_dapi_window_labels()
             self.log(f'[LOAD] DAPI fixed scale set to {self.dapi_scale:.2f} (p99.5 median from {len(vals)} sampled cells)')
 
     def log(self, msg: str) -> None:
@@ -338,9 +355,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p99_chk.setEnabled(enabled)
         self.update_umap_colors()
 
-    def _on_dapi_gain_changed(self, value):
-        gain = value / 100.0
-        self.dapi_gain_label.setText(f'{gain:.2f}x')
+    def _update_dapi_window_labels(self):
+        min_scale = self.dapi_min_slider.value() / 100.0
+        max_scale = self.dapi_max_slider.value() / 100.0
+        self.dapi_min_label.setText(f'{min_scale:.2f}x')
+        self.dapi_max_label.setText(f'{max_scale:.2f}x')
+
+    def _on_dapi_window_changed(self, _value):
+        self._update_dapi_window_labels()
         if self.current_index is not None:
             self._show_selected_images(self.current_index)
 
@@ -355,7 +377,7 @@ class MainWindow(QtWidgets.QMainWindow):
             features = [it.text() for it in items]
         X = self.df[features].apply(pd.to_numeric, errors='coerce').fillna(0).values
         n_samples, n_features = X.shape
-        self.log(f'[UMAP] Computing with {n_samples} samples and {n_features} features')
+        self.log(f'[PERFORMING UMAP] Computing with {n_samples} samples and {n_features} features')
         try:
             adata = ad.AnnData(X)
             adata.obs = pd.DataFrame(index=range(adata.n_obs))
@@ -520,11 +542,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coords is None or x is None or y is None:
             return
         if event.inaxes == self.ax_umap and self.nn_umap is not None:
-            _, idx = self.nn_umap.kneighbors([[x, y]], return_distance=True)
-            self._select_index(int(idx[0][0]))
+            self._maybe_select_nearest(self.coords, self.nn_umap, x, y, self.ax_umap)
         elif event.inaxes == self.ax_feat and self.nn_feat is not None:
-            _, idx = self.nn_feat.kneighbors([[x, y]], return_distance=True)
-            self._select_index(int(idx[0][0]))
+            self._maybe_select_nearest(self.feat_coords, self.nn_feat, x, y, self.ax_feat)
+
+    def _maybe_select_nearest(self, coords, nn_model, x, y, axis):
+        if coords is None or nn_model is None:
+            return
+        dist, idx = nn_model.kneighbors([[x, y]], return_distance=True)
+        nearest_dist = float(dist[0][0])
+        x_min, x_max = axis.get_xlim()
+        y_min, y_max = axis.get_ylim()
+        span = max(abs(x_max - x_min), abs(y_max - y_min), 1e-9)
+        threshold = span * 0.08
+        if nearest_dist > threshold:
+            return
+        self._select_index(int(idx[0][0]))
 
     def _select_index(self, i: int):
         self.current_index = int(i)
@@ -555,19 +588,21 @@ class MainWindow(QtWidgets.QMainWindow):
         bf_disp = normalize_image(bf)
 
         # DAPI uses background subtraction and fixed normalization for cross-cell comparison.
-        dapi_gain = self.dapi_gain_slider.value() / 100.0
         dapi_bg = subtract_background(dapi)
-        scale = self.dapi_scale if self.dapi_scale is not None else max(float(np.nanpercentile(dapi_bg, 99.5)), 1.0)
-        dapi_disp = np.clip((dapi_bg / scale) * dapi_gain, 0.0, 1.0)
+        dapi_min = (self.dapi_min_slider.value() / 100.0) * self.dapi_scale if self.dapi_scale is not None else 0.0
+        dapi_max = (self.dapi_max_slider.value() / 100.0) * self.dapi_scale if self.dapi_scale is not None else max(float(np.nanpercentile(dapi_bg, 99.5)), 1.0)
+        if dapi_max <= dapi_min:
+            dapi_max = dapi_min + 1.0
+        dapi_disp = np.clip((dapi_bg - dapi_min) / (dapi_max - dapi_min), 0.0, 1.0)
 
-        overlay = overlay_images(bf, dapi, alpha=0.85, dapi_scale=scale, dapi_gain=dapi_gain)
+        overlay = overlay_images(bf, dapi, alpha=0.85, dapi_min=dapi_min, dapi_max=dapi_max)
 
         self.img_axes[0].clear()
         self.img_axes[0].imshow(bf_disp, cmap='gray')
         self.img_axes[0].set_title('BF')
         self.img_axes[1].clear()
         self.img_axes[1].imshow(dapi_disp, cmap='gray')
-        self.img_axes[1].set_title(f'DAPI ({dapi_gain:.2f}x)')
+        self.img_axes[1].set_title(f'DAPI ({self.dapi_min_slider.value()/100.0:.2f}x-{self.dapi_max_slider.value()/100.0:.2f}x)')
         self.img_axes[2].clear()
         self.img_axes[2].imshow(np.array(overlay))
         self.img_axes[2].set_title('Overlay')
@@ -600,13 +635,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         bf_n = (normalize_image(bf) * 255).astype(np.uint8)
         dapi_bg = subtract_background(dapi)
-        dapi_gain = self.dapi_gain_slider.value() / 100.0
-        scale = self.dapi_scale if self.dapi_scale is not None else max(float(np.nanpercentile(dapi_bg, 99.5)), 1.0)
-        dapi_n = (np.clip((dapi_bg / scale) * dapi_gain, 0.0, 1.0) * 255).astype(np.uint8)
+        dapi_min = (self.dapi_min_slider.value() / 100.0) * self.dapi_scale if self.dapi_scale is not None else 0.0
+        dapi_max = (self.dapi_max_slider.value() / 100.0) * self.dapi_scale if self.dapi_scale is not None else max(float(np.nanpercentile(dapi_bg, 99.5)), 1.0)
+        if dapi_max <= dapi_min:
+            dapi_max = dapi_min + 1.0
+        dapi_n = (np.clip((dapi_bg - dapi_min) / (dapi_max - dapi_min), 0.0, 1.0) * 255).astype(np.uint8)
         from PIL import Image
         bf_img = Image.fromarray(bf_n)
         dapi_img = Image.fromarray(dapi_n)
-        overlay_img = overlay_images(bf, dapi, alpha=0.85, dapi_scale=scale, dapi_gain=dapi_gain)
+        overlay_img = overlay_images(bf, dapi, alpha=0.85, dapi_min=dapi_min, dapi_max=dapi_max)
 
         # save PNG and TIFF
         bf_png = out_dir / f'{obj}_BF.png'
@@ -645,7 +682,7 @@ class MainWindow(QtWidgets.QMainWindow):
 def run_app():
     app = QtWidgets.QApplication(sys.argv)
     win = MainWindow()
-    win.show()
+    win.showMaximized()
     sys.exit(app.exec())
 
 

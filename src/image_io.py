@@ -74,17 +74,22 @@ def overlay_images(
     bf: np.ndarray,
     dapi: np.ndarray,
     alpha: float = 0.65,
+    dapi_min: float | None = None,
+    dapi_max: float | None = None,
     dapi_scale: float | None = None,
     dapi_gain: float = 1.0,
 ) -> Image.Image:
     """Return an RGB image with BF as base and DAPI overlaid in cyan.
 
-    If ``dapi_scale`` is provided, DAPI normalization is fixed across cells:
-    dapi_norm = clip((dapi_bg_subtracted / dapi_scale) * dapi_gain, 0, 1).
+    If ``dapi_min``/``dapi_max`` are provided, DAPI normalization is fixed across cells:
+    dapi_norm = clip((dapi_bg_subtracted - dapi_min) / (dapi_max - dapi_min), 0, 1).
+    Otherwise, if ``dapi_scale`` is provided, use the older scale/gain path.
     """
     bf_n = normalize_image(bf)
     dapi_bg = subtract_background(dapi)
-    if dapi_scale is not None and np.isfinite(dapi_scale) and dapi_scale > 0:
+    if dapi_min is not None and dapi_max is not None and np.isfinite(dapi_min) and np.isfinite(dapi_max) and dapi_max > dapi_min:
+        dapi_n = np.clip((dapi_bg - float(dapi_min)) / (float(dapi_max) - float(dapi_min)), 0.0, 1.0)
+    elif dapi_scale is not None and np.isfinite(dapi_scale) and dapi_scale > 0:
         dapi_n = np.clip((dapi_bg / float(dapi_scale)) * float(dapi_gain), 0.0, 1.0)
     else:
         dapi_n = np.clip(normalize_image(dapi_bg) * float(dapi_gain), 0.0, 1.0)
