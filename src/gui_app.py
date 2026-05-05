@@ -13,9 +13,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt6 import QtCore, QtWidgets
 from sklearn.neighbors import NearestNeighbors
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
+from matplotlib.font_manager import FontProperties
 
 from .data_loader import index_images, load_channel_map, load_features_table
-from .image_io import load_image, normalize_image, overlay_images, subtract_background
+from .image_io import get_pixel_size_um, load_image, normalize_image, overlay_images, subtract_background
 
 
 def parse_args(argv=None):
@@ -29,7 +31,7 @@ def parse_args(argv=None):
     parser.add_argument('--y-axis', dest='y_feature', default='', help='Default feature for the Y axis scatter plot')
     parser.add_argument('--autoload', dest='autoload', action='store_true', help='Load the selected files immediately when the GUI opens')
     parser.add_argument('--no-autoload', dest='autoload', action='store_false', help='Open the GUI without loading data')
-    parser.set_defaults(autoload=True)
+    parser.set_defaults(autoload=False)
     return parser.parse_args(argv)
 
 
@@ -134,21 +136,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         umap_btn = QtWidgets.QPushButton('Compute UMAP')
         umap_btn.clicked.connect(self.compute_umap)
-        controls_grid.addWidget(umap_btn, 2, 0)
+        umap_btn.setMinimumHeight(34)
+        umap_btn.setMinimumWidth(220)
+        controls_grid.addWidget(umap_btn, 2, 0, 1, 3)
 
-        # Export buttons
-        self.save_img_btn = QtWidgets.QPushButton('Save Cell Images')
-        self.save_img_btn.clicked.connect(self.save_current_cell_images)
-        self.save_img_btn.setEnabled(False)
-        self.save_adata_btn = QtWidgets.QPushButton('Save AnnData (.h5ad)')
-        self.save_adata_btn.clicked.connect(self.save_adata)
-        self.save_adata_btn.setEnabled(False)
-        controls_grid.addWidget(self.save_img_btn, 2, 1)
-        controls_grid.addWidget(self.save_adata_btn, 2, 2)
-
-        # Color options (off by default)
+        # Color options (on by default)
         self.color_chk = QtWidgets.QCheckBox('Color UMAP by feature')
-        self.color_chk.setChecked(False)
+        self.color_chk.setChecked(True)
         controls_grid.addWidget(self.color_chk, 3, 0, 1, 2)
         self.color_combo = QtWidgets.QComboBox()
         self.color_combo.setEnabled(False)
@@ -208,15 +202,51 @@ class MainWindow(QtWidgets.QMainWindow):
         self.y_log_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
         self.dapi_min_slider.valueChanged.connect(self._on_dapi_window_changed)
         self.dapi_max_slider.valueChanged.connect(self._on_dapi_window_changed)
+        # Early internal state needed by startup callbacks
+        self.display_df = None
+        self._toggle_color_controls(self.color_chk.checkState().value)
 
         # Image panel: 1 column x 3 rows
         image_group = QtWidgets.QGroupBox('Selected Cell Images')
-        image_layout = QtWidgets.QVBoxLayout(image_group)
+        image_layout = QtWidgets.QHBoxLayout(image_group)
         left_layout.addWidget(image_group, stretch=1)
-        self.img_fig = Figure(figsize=(8, 4))
+        self.img_fig = Figure(figsize=(12, 5.8))
         self.img_canvas = FigureCanvas(self.img_fig)
-        image_layout.addWidget(self.img_canvas)
+        image_layout.addWidget(self.img_canvas, stretch=1)
         self.img_axes = [self.img_fig.add_subplot(1, 3, i + 1) for i in range(3)]
+        for ax in self.img_axes:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+            ax.axis('off')
+
+        scalebar_panel = QtWidgets.QWidget()
+        scalebar_panel.setFixedWidth(140)
+        scalebar_layout = QtWidgets.QVBoxLayout(scalebar_panel)
+        scalebar_layout.setContentsMargins(0, 0, 0, 0)
+        scalebar_layout.setSpacing(6)
+        self.show_scalebar_chk = QtWidgets.QCheckBox('Scale bar\n(10 um)')
+        self.show_scalebar_chk.setChecked(False)
+        self.show_scalebar_chk.setEnabled(False)
+        scalebar_layout.addWidget(self.show_scalebar_chk)
+        scalebar_layout.addStretch(1)
+        image_layout.addWidget(scalebar_panel)
+
+        self.show_scalebar_chk.stateChanged.connect(self._refresh_selected_images)
+
+        save_group = QtWidgets.QGroupBox('Save')
+        save_layout = QtWidgets.QVBoxLayout(save_group)
+        save_layout.setContentsMargins(8, 8, 8, 8)
+        save_layout.setSpacing(6)
+        self.save_img_btn = QtWidgets.QPushButton('Save Cell Images')
+        self.save_img_btn.clicked.connect(self.save_current_cell_images)
+        self.save_img_btn.setEnabled(False)
+        self.save_adata_btn = QtWidgets.QPushButton('Save AnnData (.h5ad)')
+        self.save_adata_btn.clicked.connect(self.save_adata)
+        self.save_adata_btn.setEnabled(False)
+        save_layout.addWidget(self.save_img_btn)
+        save_layout.addWidget(self.save_adata_btn)
+        left_layout.addWidget(save_group, stretch=0)
 
         # Plot panel
         plots_group = QtWidgets.QGroupBox('UMAP and Feature Scatter')
@@ -259,6 +289,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.colorbar = None
         self.display_df = None
         self.dapi_scale = None
+        self.image_pixel_size_um = None
+        self.scalebar_artists = []
+        self._show_empty_images('')
+        self._redraw_plots()
 
     def _apply_startup_config(self):
         if not self.startup_config:
@@ -293,6 +327,9 @@ class MainWindow(QtWidgets.QMainWindow):
         df = load_features_table(feats)
         df = index_images(imgs, df, channel_map)
         df = self._rename_feature_columns(df)
+        df = self._filter_features_by_available_channels(df)
+        df = self._add_area_ratios(df)
+        df = self._add_length_width_ratios(df)
         # filter to only rows that have at least one channel path
         path_cols = [str(ch) + '_path' for ch in channel_map.values()]
         available_mask = df[path_cols].notna().any(axis=1)
@@ -301,8 +338,13 @@ class MainWindow(QtWidgets.QMainWindow):
         found_counts = int(df_filtered[path_cols].notna().sum().sum())
         rows_with_images = int(df_filtered.shape[0])
         self.df = df_filtered
+        self.display_df = self.df.reset_index(drop=True)
         self.log(f'[LOADED] {len(df)} objects; {rows_with_images} objects have at least one image; total channel paths found: {found_counts}')
         self._populate_feature_controls()
+        self._update_feature_coords()
+        self._redraw_plots()
+        self.canvas.draw()
+        QtCore.QCoreApplication.processEvents()
         self._estimate_dapi_scale()
 
     def _rename_feature_columns(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -351,6 +393,131 @@ class MainWindow(QtWidgets.QMainWindow):
         if rename_map:
             df = df.rename(columns=rename_map)
             self.log(f'[LOAD] Renamed {len(rename_map)} feature columns (_M1->BF, M07_DAPI->DAPI)')
+        return df
+
+    def _add_area_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
+        area_cols = [c for c in df.columns if c != 'Object Number' and not c.endswith('_path') and 'area' in c.lower()]
+        if len(area_cols) < 2:
+            return df
+        new_cols = {}
+        for i, numerator in enumerate(area_cols):
+            numerator_vals = pd.to_numeric(df[numerator], errors='coerce').astype(float)
+            for denominator in area_cols[i + 1:]:
+                denominator_vals = pd.to_numeric(df[denominator], errors='coerce').astype(float)
+                ratio_name = f'{numerator}_to_{denominator}'
+                ratio_vals = np.full(len(df), np.nan, dtype=np.float32)
+                valid = denominator_vals.to_numpy(dtype=float) != 0
+                ratio_vals[valid] = (numerator_vals.to_numpy(dtype=float)[valid] / denominator_vals.to_numpy(dtype=float)[valid]).astype(np.float32)
+                new_cols[ratio_name] = ratio_vals
+                reverse_name = f'{denominator}_to_{numerator}'
+                reverse_vals = np.full(len(df), np.nan, dtype=np.float32)
+                valid_rev = numerator_vals.to_numpy(dtype=float) != 0
+                reverse_vals[valid_rev] = (denominator_vals.to_numpy(dtype=float)[valid_rev] / numerator_vals.to_numpy(dtype=float)[valid_rev]).astype(np.float32)
+                new_cols[reverse_name] = reverse_vals
+        for col_name, values in new_cols.items():
+            if col_name not in df.columns:
+                df[col_name] = values
+        if new_cols:
+            self.log(f'[LOAD] Added {len(new_cols)} area-ratio features')
+        return df
+
+    def _filter_features_by_available_channels(self, df: pd.DataFrame) -> pd.DataFrame:
+        allowed_channel_numbers = set()
+        allowed_channel_labels = set()
+        for key in self.channel_map.keys():
+            low = str(key).strip().lower()
+            m = re.match(r'^(?:ch|m)0*(\d{1,2})$', low)
+            if m:
+                allowed_channel_numbers.add(int(m.group(1)))
+        for val in self.channel_map.values():
+            low_val = str(val).strip().lower()
+            if low_val:
+                allowed_channel_labels.add(low_val)
+        # Keep legacy defaults for BF/DAPI when channel numbers are implied.
+        if 'ch1' in {str(k).strip().lower() for k in self.channel_map.keys()}:
+            allowed_channel_numbers.add(1)
+        if 'ch7' in {str(k).strip().lower() for k in self.channel_map.keys()}:
+            allowed_channel_numbers.add(7)
+
+        if not allowed_channel_numbers:
+            return df
+
+        keep_cols = []
+        dropped = []
+        for col in df.columns:
+            if col == 'Object Number' or col.endswith('_path'):
+                keep_cols.append(col)
+                continue
+
+            # Columns like Intensity_MC_DAPI / Max Pixel_MC_BF encode channel name, not channel number.
+            mc_match = re.search(r'(?i)_MC_([^_]+)$', col)
+            if mc_match:
+                mc_label = mc_match.group(1).strip().lower()
+                if mc_label in allowed_channel_labels:
+                    keep_cols.append(col)
+                else:
+                    dropped.append(col)
+                continue
+
+            numeric_hits = [int(n) for n in re.findall(r'(?i)(?:^|[^0-9A-Za-z])(?:m|ch)0*(\d{1,2})(?=$|[^0-9A-Za-z])', col)]
+            if not numeric_hits:
+                # Channel-agnostic features are retained.
+                keep_cols.append(col)
+                continue
+
+            if any(n in allowed_channel_numbers for n in numeric_hits):
+                keep_cols.append(col)
+            else:
+                dropped.append(col)
+
+        if dropped:
+            self.log(f'[LOAD] Filtered out {len(dropped)} feature columns not present in channel map')
+        return df[keep_cols]
+
+    def _add_length_width_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
+        feature_cols = [c for c in df.columns if c != 'Object Number' and not c.endswith('_path')]
+        pairs = {}
+        for col in feature_cols:
+            low = col.lower()
+            if 'length' not in low and 'width' not in low:
+                continue
+            parts = [p for p in re.split(r'[_\-\s]+', col) if p]
+            role = None
+            base_parts = []
+            for p in parts:
+                pl = p.lower()
+                if pl == 'length':
+                    role = 'length'
+                    continue
+                if pl == 'width':
+                    role = 'width'
+                    continue
+                base_parts.append(pl)
+            if role is None or not base_parts:
+                continue
+            base = ' '.join(base_parts)
+            slot = pairs.setdefault(base, {})
+            slot[role] = col
+
+        added = 0
+        for base, cols in pairs.items():
+            length_col = cols.get('length')
+            width_col = cols.get('width')
+            if not length_col or not width_col:
+                continue
+            ratio_name = f'{length_col}_to_{width_col}'
+            if ratio_name in df.columns:
+                continue
+            length_vals = pd.to_numeric(df[length_col], errors='coerce').astype(float)
+            width_vals = pd.to_numeric(df[width_col], errors='coerce').astype(float)
+            ratio_vals = np.full(len(df), np.nan, dtype=np.float32)
+            valid = width_vals.to_numpy(dtype=float) != 0
+            ratio_vals[valid] = (length_vals.to_numpy(dtype=float)[valid] / width_vals.to_numpy(dtype=float)[valid]).astype(np.float32)
+            df[ratio_name] = ratio_vals
+            added += 1
+
+        if added:
+            self.log(f'[LOAD] Added {added} length/width ratio features')
         return df
 
     def _populate_feature_controls(self):
@@ -410,11 +577,11 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 continue
         if vals:
-            self.dapi_scale = max(float(np.median(vals)), 1.0)
+            self.dapi_scale = max(float(np.mean(vals)), 1.0)
             self.dapi_min_slider.setValue(0)
             self.dapi_max_slider.setValue(100)
             self._update_dapi_window_labels()
-            self.log(f'[LOAD] DAPI fixed scale set to {self.dapi_scale:.2f} (p99.5 median from {len(vals)} sampled cells)')
+            self.log(f'[LOAD] DAPI fixed scale set to {self.dapi_scale:.2f} (p99.5 mean from {len(vals)} sampled cells)')
 
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -457,6 +624,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.current_index is not None:
             self._show_selected_images(self.current_index)
 
+    def _refresh_selected_images(self, *_args):
+        if self.current_index is not None:
+            self._show_selected_images(self.current_index)
+
     def compute_umap(self):
         if self.df is None:
             self.log('[UMAP] No data loaded')
@@ -469,6 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
         X = self.df[features].apply(pd.to_numeric, errors='coerce').fillna(0).values
         n_samples, n_features = X.shape
         self.log(f'[PERFORMING UMAP] Computing with {n_samples} samples and {n_features} features')
+        QtCore.QCoreApplication.processEvents()
         try:
             adata = ad.AnnData(X)
             adata.obs = pd.DataFrame(index=range(adata.n_obs))
@@ -482,7 +654,16 @@ class MainWindow(QtWidgets.QMainWindow):
             # choose n_comps safely based on adata
             n_samples = int(adata.n_obs)
             n_features = int(adata.n_vars)
-            n_comps = min(50, max(1, min(n_samples, n_features)))
+            min_dim = min(n_samples, n_features)
+            if min_dim <= 1:
+                msg = f'UMAP skipped: need at least 2 samples and 2 features (found samples={n_samples}, features={n_features})'
+                self.log(f'[UMAP] {msg}')
+                QtWidgets.QMessageBox.warning(self, 'UMAP skipped', msg)
+                return
+            # PCA via scanpy/ sklearn with svd_solver='arpack' requires n_comps < min(n_samples, n_features)
+            # choose at most 50 components but strictly less than min_dim
+            n_comps = max(1, min(50, min_dim - 1))
+            self.log(f'[UMAP] using n_comps={n_comps} for PCA')
             sc.pp.pca(adata, n_comps=n_comps)
             sc.pp.neighbors(adata)
             sc.tl.umap(adata)
@@ -602,12 +783,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.colorbar = None
 
     def _redraw_plots(self):
-        if self.coords is None:
-            return
         self.ax_umap.clear()
         self.ax_feat.clear()
-        self.umap_scatter = self._draw_umap_scatter()
-        self.feat_scatter = self._draw_feature_scatter()
+        if self.coords is None:
+            self.ax_umap.text(0.5, 0.5, 'UMAP not computed yet', ha='center', va='center', transform=self.ax_umap.transAxes)
+            self.ax_umap.set_xticks([])
+            self.ax_umap.set_yticks([])
+            self.ax_umap.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+            self.umap_scatter = None
+        else:
+            self.umap_scatter = self._draw_umap_scatter()
+        if self.display_df is not None:
+            self.feat_scatter = self._draw_feature_scatter()
+        else:
+            self.ax_feat.set_xticks([])
+            self.ax_feat.set_yticks([])
+            self.ax_feat.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+            self.feat_scatter = None
         self.ax_umap.set_title('UMAP')
         self.ax_umap.set_box_aspect(1)
         self.ax_feat.set_box_aspect(1)
@@ -656,12 +848,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def update_umap_colors(self):
         """Update scatter colors without recomputing UMAP."""
-        if self.coords is None:
+        if self.display_df is None:
             return
         self._redraw_plots()
 
     def update_feature_scatter(self):
-        if self.coords is None or self.display_df is None:
+        if self.display_df is None:
             return
         self._update_feature_coords()
         self._redraw_plots()
@@ -670,11 +862,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.inaxes not in (self.ax_umap, self.ax_feat):
             return
         x, y = event.xdata, event.ydata
-        if self.coords is None or x is None or y is None:
+        if x is None or y is None:
             return
-        if event.inaxes == self.ax_umap and self.nn_umap is not None:
+        if event.inaxes == self.ax_umap and self.coords is not None and self.nn_umap is not None:
             self._maybe_select_nearest(self.coords, self.nn_umap, x, y, self.ax_umap)
-        elif event.inaxes == self.ax_feat and self.nn_feat is not None:
+        elif event.inaxes == self.ax_feat and self.feat_coords_nn is not None and self.nn_feat is not None:
             self._maybe_select_nearest(self.feat_coords_nn, self.nn_feat, x, y, self.ax_feat, transform='feature')
 
     def _maybe_select_nearest(self, coords, nn_model, x, y, axis, transform=None):
@@ -705,8 +897,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_selected_images(self, i: int):
         if self.display_df is None or i < 0 or i >= len(self.display_df):
+            self._show_empty_images('')
             return
         obj_row = self.display_df.iloc[i]
+        obj_id = str(obj_row.get('Object Number'))
 
         bf_path = obj_row.get('BF_path')
         dapi_path = obj_row.get('DAPI_path')
@@ -720,6 +914,20 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self.log(f'[ERROR] Failed to read DAPI image for {obj_row.get("Object Number")}: {e}')
             dapi = np.zeros_like(bf)
+
+        pixel_size_um = None
+        for candidate in (bf_path, dapi_path):
+            if candidate:
+                pixel_size_um = get_pixel_size_um(Path(candidate))
+                if pixel_size_um is not None:
+                    break
+        if pixel_size_um is not None:
+            self.image_pixel_size_um = float(pixel_size_um)
+            self.show_scalebar_chk.setEnabled(True)
+        else:
+            self.image_pixel_size_um = None
+            self.show_scalebar_chk.setChecked(False)
+            self.show_scalebar_chk.setEnabled(False)
 
         # BF is always shown fully as the base channel.
         bf_disp = normalize_image(bf)
@@ -736,17 +944,72 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.img_axes[0].clear()
         self.img_axes[0].imshow(bf_disp, cmap='gray')
-        self.img_axes[0].set_title('BF')
+        self.img_axes[0].set_title('BF', color='#444444', fontweight='bold')
         self.img_axes[1].clear()
         self.img_axes[1].imshow(dapi_disp, cmap='gray')
-        self.img_axes[1].set_title('DAPI')
+        self.img_axes[1].set_title('DAPI', color='#00bcd4', fontweight='bold')
         self.img_axes[2].clear()
         self.img_axes[2].imshow(np.array(overlay))
-        self.img_axes[2].set_title('Overlay')
+        self.img_axes[2].set_title('Overlay', color='#7b1fa2', fontweight='bold')
+
+        self.img_fig.suptitle(f'Cell {obj_id}', fontsize=12, y=0.985)
+
+        self._clear_scalebars()
+        if self.show_scalebar_chk.isChecked():
+            self._draw_scalebar(self.img_axes, bf_disp.shape)
         for ax in self.img_axes:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
             ax.axis('off')
-        self.img_fig.tight_layout(pad=0.8)
+        self.img_fig.subplots_adjust(left=0.02, right=0.98, bottom=0.04, top=0.80, wspace=0.06)
         self.img_canvas.draw()
+
+    def _show_empty_images(self, message: str):
+        self.img_fig.suptitle('')
+        for ax in self.img_axes:
+            ax.clear()
+            if message:
+                ax.text(0.5, 0.5, message, ha='center', va='center', transform=ax.transAxes, color='0.4')
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+            ax.axis('off')
+        self.img_fig.subplots_adjust(left=0.02, right=0.98, bottom=0.04, top=0.80, wspace=0.06)
+        self.img_canvas.draw()
+
+    def _clear_scalebars(self):
+        for artist in self.scalebar_artists:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self.scalebar_artists = []
+
+    def _draw_scalebar(self, axes, image_shape):
+        pixel_size_um = self.image_pixel_size_um
+        if pixel_size_um is None or pixel_size_um <= 0:
+            return
+        bar_um = 10.0
+        bar_px = max(int(round(bar_um / pixel_size_um)), 1)
+        for ax in axes:
+            scalebar = AnchoredSizeBar(
+                ax.transData,
+                bar_px,
+                '',
+                loc='lower right',
+                pad=0.0,
+                borderpad=0.0,
+                sep=2,
+                color='white',
+                frameon=False,
+                size_vertical=max(int(round(image_shape[0] * 0.01)), 1),
+                fontproperties=FontProperties(size=8, weight='bold'),
+                bbox_to_anchor=(0.95, 0.01),
+                bbox_transform=ax.transAxes,
+            )
+            ax.add_artist(scalebar)
+            self.scalebar_artists.append(scalebar)
 
     def save_current_cell_images(self):
         if self.current_index is None:
