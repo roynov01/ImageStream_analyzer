@@ -74,11 +74,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         load_btn = QtWidgets.QPushButton('Load Data')
         load_btn.clicked.connect(self.load_data)
+        load_h5ad_btn = QtWidgets.QPushButton('Load H5AD')
+        load_h5ad_btn.clicked.connect(self.load_adata_file)
+
+        # Vertical button column: Load Data on top, Load H5AD below
+        btn_layout = QtWidgets.QVBoxLayout()
+        btn_layout.setSpacing(6)
+        btn_layout.addWidget(load_btn)
+        btn_layout.addWidget(load_h5ad_btn)
 
         data_grid.addWidget(QtWidgets.QLabel('Features:'), 0, 0)
         data_grid.addWidget(self.features_path, 0, 1)
         data_grid.addWidget(feat_browse, 0, 2)
-        data_grid.addWidget(load_btn, 0, 3, 5, 1)
+        data_grid.addLayout(btn_layout, 0, 3, 5, 1)
 
         data_grid.addWidget(QtWidgets.QLabel('Images:'), 1, 0)
         data_grid.addWidget(self.images_path, 1, 1)
@@ -290,6 +298,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dapi_scale = None
         self.image_pixel_size_um = None
         self.scalebar_artists = []
+        # Image cache for lazy-loading (path -> ndarray)
+        self.image_cache = {}
+        self.image_cache_size_limit = 50  # max images to keep in memory
         self._show_empty_images('')
         self._redraw_plots()
 
@@ -643,6 +654,8 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QCoreApplication.processEvents()
         try:
             adata = ad.AnnData(X)
+            # Store feature names in var so they persist through save/load
+            adata.var.index = features
             adata.obs = pd.DataFrame(index=range(adata.n_obs))
             if 'Object Number' in self.df.columns:
                 adata.obs['Object Number'] = self.df['Object Number'].values
@@ -911,12 +924,12 @@ class MainWindow(QtWidgets.QMainWindow):
         bf_path = obj_row.get('BF_path')
         dapi_path = obj_row.get('DAPI_path')
         try:
-            bf = load_image(Path(bf_path)) if bf_path else np.zeros((64, 64), dtype=np.float32)
+            bf = self._load_image_cached(Path(bf_path)) if bf_path else np.zeros((64, 64), dtype=np.float32)
         except Exception as e:
             self.log(f'[ERROR] Failed to read BF image for {obj_row.get("Object Number")}: {e}')
             bf = np.zeros((64, 64), dtype=np.float32)
         try:
-            dapi = load_image(Path(dapi_path)) if dapi_path else np.zeros_like(bf)
+            dapi = self._load_image_cached(Path(dapi_path)) if dapi_path else np.zeros_like(bf)
         except Exception as e:
             self.log(f'[ERROR] Failed to read DAPI image for {obj_row.get("Object Number")}: {e}')
             dapi = np.zeros_like(bf)
@@ -983,6 +996,27 @@ class MainWindow(QtWidgets.QMainWindow):
             ax.axis('off')
         self.img_fig.subplots_adjust(left=0.02, right=0.98, bottom=0.04, top=0.80, wspace=0.06)
         self.img_canvas.draw()
+
+    def _load_image_cached(self, path: Path) -> np.ndarray:
+        """Load image with in-memory cache to avoid repeated disk I/O (lazy-loading optimization)."""
+        path_key = str(path)
+        if path_key in self.image_cache:
+            return self.image_cache[path_key]
+        
+        # Load from disk
+        try:
+            img = load_image(path)
+        except Exception as e:
+            self.log(f'[WARNING] Failed to load image {path}: {e}')
+            return np.zeros((64, 64), dtype=np.float32)
+        
+        # Add to cache; remove oldest if limit exceeded
+        self.image_cache[path_key] = img
+        if len(self.image_cache) > self.image_cache_size_limit:
+            oldest_key = next(iter(self.image_cache))
+            del self.image_cache[oldest_key]
+        
+        return img
 
     def _clear_scalebars(self):
         for artist in self.scalebar_artists:
@@ -1072,11 +1106,94 @@ class MainWindow(QtWidgets.QMainWindow):
         prefix = self._feature_prefix()
         out_file = out_dir / f'{prefix}adata.h5ad'
         try:
+            # Store display settings in uns for session restoration
+            self.adata.uns['session_settings'] = {
+                'dapi_scale': float(self.dapi_scale) if self.dapi_scale else None,
+                'color_feature': self.color_combo.currentText().strip(),
+                'use_p99': self.p99_chk.isChecked(),
+                'x_feature': self.x_feature_combo.currentText().strip(),
+                'y_feature': self.y_feature_combo.currentText().strip(),
+                'x_log': self.x_log_chk.isChecked(),
+                'y_log': self.y_log_chk.isChecked(),
+                'color_enabled': self.color_chk.isChecked(),
+            }
             self.adata.write_h5ad(str(out_file))
             self.log(f'[EXPORT] Saved AnnData to {out_file}')
         except Exception as e:
             self.log(f'[ERROR] Saving AnnData failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'Save error', str(e))
+
+    def load_adata_file(self):
+        """Load a previously saved h5ad file with UMAP and display settings."""
+        fn, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, 'Select AnnData file', str(Path('.')), 'H5AD files (*.h5ad);;All files (*)'
+        )
+        if not fn:
+            return
+        try:
+            self.log(f'[LOADING H5AD] {fn}')
+            self.adata = ad.read_h5ad(fn)
+            
+            # Restore feature display_df with proper column names and obs columns
+            feature_cols = list(self.adata.var.index) if hasattr(self.adata, 'var') else []
+            self.display_df = pd.DataFrame(
+                self.adata.X,
+                columns=feature_cols
+            )
+            # Add all obs columns back
+            for col in self.adata.obs.columns:
+                self.display_df[col] = self.adata.obs[col].values
+            self.log(f'[H5AD] Restored {len(feature_cols)} features and {len(self.adata.obs.columns)} obs columns')
+            
+            # Restore UMAP coordinates
+            if 'X_umap' in self.adata.obsm:
+                self.coords = self.adata.obsm['X_umap']
+                self.nn_umap = NearestNeighbors(n_neighbors=1).fit(self.coords)
+            else:
+                self.coords = None
+                self.log('[WARNING] No X_umap found in AnnData')
+            
+            # Load display settings if available
+            if 'session_settings' in self.adata.uns:
+                settings = self.adata.uns['session_settings']
+                if settings.get('dapi_scale'):
+                    self.dapi_scale = float(settings['dapi_scale'])
+            
+            self.df = self.display_df.copy()
+            self._populate_feature_controls()
+            
+            # Restore color and scatter settings from uns
+            if 'session_settings' in self.adata.uns:
+                settings = self.adata.uns['session_settings']
+                if settings.get('color_enabled'):
+                    self.color_chk.setChecked(True)
+                    if settings.get('color_feature'):
+                        idx = self.color_combo.findText(settings['color_feature'])
+                        if idx >= 0:
+                            self.color_combo.setCurrentIndex(idx)
+                    self.p99_chk.setChecked(settings.get('use_p99', True))
+                if settings.get('x_feature'):
+                    idx = self.x_feature_combo.findText(settings['x_feature'])
+                    if idx >= 0:
+                        self.x_feature_combo.setCurrentIndex(idx)
+                if settings.get('y_feature'):
+                    idx = self.y_feature_combo.findText(settings['y_feature'])
+                    if idx >= 0:
+                        self.y_feature_combo.setCurrentIndex(idx)
+                self.x_log_chk.setChecked(settings.get('x_log', False))
+                self.y_log_chk.setChecked(settings.get('y_log', False))
+            
+            self._update_feature_coords()
+            self._toggle_color_controls(self.color_chk.checkState().value)
+            self._redraw_plots()
+            self.canvas.draw()
+            self.save_adata_btn.setEnabled(True)
+            self.save_img_btn.setEnabled(True)
+            self.log(f'[H5AD] Loaded successfully; UMAP ready')
+        except Exception as e:
+            self.log(f'[ERROR] Loading H5AD failed: {e}')
+            QtWidgets.QMessageBox.critical(self, 'Load H5AD error', str(e))
+
 
 
 def run_app(argv=None):
