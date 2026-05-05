@@ -74,12 +74,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         load_btn = QtWidgets.QPushButton('Load Data')
         load_btn.clicked.connect(self.load_data)
-        load_btn.setMinimumHeight(32)
 
         data_grid.addWidget(QtWidgets.QLabel('Features:'), 0, 0)
         data_grid.addWidget(self.features_path, 0, 1)
         data_grid.addWidget(feat_browse, 0, 2)
-        data_grid.addWidget(load_btn, 0, 3, 2, 1)
+        data_grid.addWidget(load_btn, 0, 3, 5, 1)
 
         data_grid.addWidget(QtWidgets.QLabel('Images:'), 1, 0)
         data_grid.addWidget(self.images_path, 1, 1)
@@ -533,8 +532,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.x_feature_combo.addItem(col)
             self.y_feature_combo.addItem(col)
 
-        self.color_combo.setEnabled(False)
-        self.p99_chk.setEnabled(False)
+        enabled = (self.display_df is not None) and self.color_chk.isChecked()
+        self.color_combo.setEnabled(enabled)
+        self.p99_chk.setEnabled(enabled)
         self.x_feature_combo.setEnabled(True)
         self.y_feature_combo.setEnabled(True)
 
@@ -670,6 +670,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.adata = adata
             self.coords = adata.obsm['X_umap']
             self.nn_umap = NearestNeighbors(n_neighbors=1).fit(self.coords)
+
+            # ensure color controls reflect current data/state
+            try:
+                self._toggle_color_controls(self.color_chk.checkState().value)
+            except Exception:
+                pass
 
             self._update_feature_coords()
             self._redraw_plots()
