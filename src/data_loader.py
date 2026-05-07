@@ -14,11 +14,11 @@ def load_channel_map(path: Path) -> Dict[str, str]:
     return mapping
 
 
-def load_features_table(path: Path, skiprows: int = 2) -> pd.DataFrame:
+def load_features_table(path: Path, skiprows: int = 0) -> pd.DataFrame:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Features file not found: {path}")
-    # Read TSV, skip first `skiprows` lines
+    # Read TSV, skip first `skiprows` lines (set to 0 if no header lines)
     df = pd.read_csv(path, sep='\t', header=0, skiprows=skiprows)
     # Normalize column name for object id
     # Possible column names: 'Object Number' or 'ObjectNumber' etc.

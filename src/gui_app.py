@@ -22,8 +22,8 @@ from .image_io import get_pixel_size_um, load_image, normalize_image, overlay_im
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description='ImageStream analysis GUI')
-    parser.add_argument('--images', dest='images_path', default=r'C:\Users\royno\Desktop\test\65_imaages\All', help='Folder containing image files')
-    parser.add_argument('--features', dest='features_path', default='data/6_65_allstains_1.txt', help='Features TXT/TSV file')
+    parser.add_argument('--images', dest='images_path', default=r'C:\Users\royno\Desktop\test', help='Folder containing image files')
+    parser.add_argument('--features', dest='features_path', default=r'C:\Users\royno\Desktop\test\6_65_allstains_1.txt', help='Features TXT/TSV file')
     parser.add_argument('--channel-map', dest='channel_map_path', default='data/channel_map.json', help='Channel map JSON file')
     parser.add_argument('--output', dest='output_path', default='data/output', help='Output folder')
     parser.add_argument('--name-prefix', dest='name_prefix', default='', help='Prefix to use for exported files')
@@ -58,8 +58,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(data_group, stretch=0)
 
         # Path fields with browse buttons
-        self.features_path = QtWidgets.QLineEdit('data/6_65_allstains_1.txt')
-        self.images_path = QtWidgets.QLineEdit(r'C:\Users\royno\Desktop\test\65_imaages\All')
+        self.features_path = QtWidgets.QLineEdit(r'C:\Users\royno\Desktop\test\6_65_allstains_1.txt')
+        self.images_path = QtWidgets.QLineEdit(r'C:\Users\royno\Desktop\test')
         self.channel_map_path = QtWidgets.QLineEdit('data/channel_map.json')
         self.output_path = QtWidgets.QLineEdit('data/output')
 
@@ -124,7 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
         body_splitter.addWidget(right_panel)
         body_splitter.setSizes([520, 900])
 
-        # Controls card
+        # Analysis controls: only UMAP features + compute button
         controls_group = QtWidgets.QGroupBox('Analysis Controls')
         controls_grid = QtWidgets.QGridLayout(controls_group)
         controls_grid.setHorizontalSpacing(6)
@@ -147,56 +147,71 @@ class MainWindow(QtWidgets.QMainWindow):
         umap_btn.setMinimumWidth(220)
         controls_grid.addWidget(umap_btn, 2, 0, 1, 3)
 
+        # Visualization controls
+        viz_group = QtWidgets.QGroupBox('Visualization Controls')
+        viz_grid = QtWidgets.QGridLayout(viz_group)
+        viz_grid.setHorizontalSpacing(6)
+        viz_grid.setVerticalSpacing(6)
+        viz_grid.setColumnStretch(0, 0)
+        viz_grid.setColumnStretch(1, 1)
+        viz_grid.setColumnStretch(2, 0)
+        left_layout.addWidget(viz_group, stretch=0)
+
         # Color options (on by default)
         self.color_chk = QtWidgets.QCheckBox('Color UMAP by feature')
         self.color_chk.setChecked(True)
-        controls_grid.addWidget(self.color_chk, 3, 0, 1, 2)
+        viz_grid.addWidget(self.color_chk, 0, 0, 1, 2)
         self.color_combo = QtWidgets.QComboBox()
         self.color_combo.setEnabled(False)
-        controls_grid.addWidget(QtWidgets.QLabel('Color feature:'), 4, 0)
-        controls_grid.addWidget(self.color_combo, 4, 1, 1, 2)
+        viz_grid.addWidget(QtWidgets.QLabel('Color feature:'), 1, 0)
+        viz_grid.addWidget(self.color_combo, 1, 1, 1, 2)
         self.p99_chk = QtWidgets.QCheckBox('vmax=p99')
         self.p99_chk.setChecked(True)
         self.p99_chk.setEnabled(False)
-        controls_grid.addWidget(self.p99_chk, 3, 2)
+        viz_grid.addWidget(self.p99_chk, 0, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('Feature X:'), 5, 0)
+        viz_grid.addWidget(QtWidgets.QLabel('Feature X:'), 2, 0)
         self.x_feature_combo = QtWidgets.QComboBox()
         self.x_feature_combo.setEnabled(False)
-        controls_grid.addWidget(self.x_feature_combo, 5, 1, 1, 2)
+        viz_grid.addWidget(self.x_feature_combo, 2, 1, 1, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('Feature Y:'), 6, 0)
+        viz_grid.addWidget(QtWidgets.QLabel('Feature Y:'), 3, 0)
         self.y_feature_combo = QtWidgets.QComboBox()
         self.y_feature_combo.setEnabled(False)
-        controls_grid.addWidget(self.y_feature_combo, 6, 1, 1, 2)
+        viz_grid.addWidget(self.y_feature_combo, 3, 1, 1, 2)
 
         self.x_log_chk = QtWidgets.QCheckBox('Log X')
         self.x_log_chk.setChecked(False)
-        controls_grid.addWidget(self.x_log_chk, 7, 0)
+        viz_grid.addWidget(self.x_log_chk, 4, 0)
 
         self.y_log_chk = QtWidgets.QCheckBox('Log Y')
         self.y_log_chk.setChecked(False)
-        controls_grid.addWidget(self.y_log_chk, 7, 1)
+        viz_grid.addWidget(self.y_log_chk, 4, 1)
 
-        controls_grid.addWidget(QtWidgets.QLabel('DAPI min:'), 8, 0)
+        self.use_scaled_chk = QtWidgets.QCheckBox('Use scaled features')
+        self.use_scaled_chk.setChecked(True)
+        self.use_scaled_chk.setToolTip('Use z-score scaled features for visualization (uncheck for raw values)')
+        viz_grid.addWidget(self.use_scaled_chk, 4, 2)
+
+        viz_grid.addWidget(QtWidgets.QLabel('DAPI min:'), 5, 0)
         self.dapi_min_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.dapi_min_slider.setMinimum(0)
         self.dapi_min_slider.setMaximum(200)
         self.dapi_min_slider.setValue(0)
         self.dapi_min_slider.setTickInterval(10)
-        controls_grid.addWidget(self.dapi_min_slider, 8, 1)
+        viz_grid.addWidget(self.dapi_min_slider, 5, 1)
         self.dapi_min_label = QtWidgets.QLabel('0.00x')
-        controls_grid.addWidget(self.dapi_min_label, 8, 2)
+        viz_grid.addWidget(self.dapi_min_label, 5, 2)
 
-        controls_grid.addWidget(QtWidgets.QLabel('DAPI max:'), 9, 0)
+        viz_grid.addWidget(QtWidgets.QLabel('DAPI max:'), 6, 0)
         self.dapi_max_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.dapi_max_slider.setMinimum(10)
         self.dapi_max_slider.setMaximum(500)
         self.dapi_max_slider.setValue(100)
         self.dapi_max_slider.setTickInterval(10)
-        controls_grid.addWidget(self.dapi_max_slider, 9, 1)
+        viz_grid.addWidget(self.dapi_max_slider, 6, 1)
         self.dapi_max_label = QtWidgets.QLabel('1.00x')
-        controls_grid.addWidget(self.dapi_max_label, 9, 2)
+        viz_grid.addWidget(self.dapi_max_label, 6, 2)
         self._update_dapi_window_labels()
 
         # wire color controls
@@ -207,6 +222,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.y_feature_combo.currentIndexChanged.connect(lambda _: self.update_feature_scatter())
         self.x_log_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
         self.y_log_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
+        self.use_scaled_chk.stateChanged.connect(lambda _: self.update_umap_colors())
+        self.use_scaled_chk.stateChanged.connect(lambda _: self.update_feature_scatter())
         self.dapi_min_slider.valueChanged.connect(self._on_dapi_window_changed)
         self.dapi_max_slider.valueChanged.connect(self._on_dapi_window_changed)
         # Early internal state needed by startup callbacks
@@ -262,7 +279,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fig = Figure(figsize=(10, 6))
         self.canvas = FigureCanvas(self.fig)
         plots_layout.addWidget(self.canvas)
-        self.plot_grid = self.fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.06], wspace=0.25)
+        self.plot_grid = self.fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.10], wspace=0.18)
         self.ax_umap = self.fig.add_subplot(self.plot_grid[0, 0])
         self.ax_feat = self.fig.add_subplot(self.plot_grid[0, 1])
         self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
@@ -664,6 +681,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     adata.obs[col] = self.df[col].values
             self.display_df = self.df.reset_index(drop=True)
             
+            # Store raw features, then scale for PCA
+            adata.layers['raw'] = adata.X.copy()
+            sc.pp.scale(adata)
+            adata.layers['scaled'] = adata.X.copy()
+            
             # choose n_comps safely based on adata
             n_samples = int(adata.n_obs)
             n_features = int(adata.n_vars)
@@ -711,8 +733,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.feat_std = None
             self.nn_feat = None
             return
-        xvals = pd.to_numeric(self.display_df[x_name], errors='coerce').fillna(0).values.astype(np.float32)
-        yvals = pd.to_numeric(self.display_df[y_name], errors='coerce').fillna(0).values.astype(np.float32)
+        
+        # Use scaled or raw values based on checkbox
+        if self.use_scaled_chk.isChecked() and self.adata is not None and 'scaled' in self.adata.layers:
+            x_idx = list(self.adata.var.index).index(x_name) if x_name in self.adata.var.index else None
+            y_idx = list(self.adata.var.index).index(y_name) if y_name in self.adata.var.index else None
+            if x_idx is not None and y_idx is not None:
+                xvals = self.adata.layers['scaled'][:, x_idx].astype(np.float32)
+                yvals = self.adata.layers['scaled'][:, y_idx].astype(np.float32)
+            else:
+                xvals = pd.to_numeric(self.display_df[x_name], errors='coerce').fillna(0).values.astype(np.float32)
+                yvals = pd.to_numeric(self.display_df[y_name], errors='coerce').fillna(0).values.astype(np.float32)
+        else:
+            # Use raw values from display_df
+            xvals = pd.to_numeric(self.display_df[x_name], errors='coerce').fillna(0).values.astype(np.float32)
+            yvals = pd.to_numeric(self.display_df[y_name], errors='coerce').fillna(0).values.astype(np.float32)
+        
         if self.x_log_chk.isChecked():
             xvals = np.log1p(np.clip(xvals, 0, None))
         if self.y_log_chk.isChecked():
@@ -769,7 +805,6 @@ class MainWindow(QtWidgets.QMainWindow):
         y_label = f'log1p({y_name})' if self.y_log_chk.isChecked() else y_name
         self.ax_feat.set_xlabel(x_label)
         self.ax_feat.set_ylabel(y_label)
-        self.ax_feat.set_title(f'{x_name} vs {y_name}')
         return sca
 
     def _get_color_feature_values(self):
@@ -778,7 +813,19 @@ class MainWindow(QtWidgets.QMainWindow):
         feat_name = self.color_combo.currentText().strip()
         if not feat_name or feat_name not in self.display_df.columns:
             return None, None, None
-        vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
+        
+        # Use scaled or raw values based on checkbox
+        if self.use_scaled_chk.isChecked() and self.adata is not None and 'scaled' in self.adata.layers:
+            # Get scaled values from adata
+            feat_idx = list(self.adata.var.index).index(feat_name) if feat_name in self.adata.var.index else None
+            if feat_idx is not None:
+                vals = self.adata.layers['scaled'][:, feat_idx]
+            else:
+                vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
+        else:
+            # Use raw values from display_df
+            vals = pd.to_numeric(self.display_df[feat_name], errors='coerce').fillna(0).values
+        
         vmax = None
         if self.p99_chk.isChecked():
             try:
@@ -819,10 +866,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ax_feat.set_yticks([])
             self.ax_feat.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
             self.feat_scatter = None
-        self.ax_umap.set_title('UMAP')
         self.ax_umap.set_box_aspect(1)
         self.ax_feat.set_box_aspect(1)
-        self.fig.subplots_adjust(left=0.06, right=0.98, bottom=0.12, top=0.92, wspace=0.25)
+        self.fig.tight_layout(pad=0.8, rect=[0.01, 0.02, 0.995, 0.98])
 
         if self.current_index is not None:
             self._draw_selection_markers()
@@ -1116,6 +1162,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 'x_log': self.x_log_chk.isChecked(),
                 'y_log': self.y_log_chk.isChecked(),
                 'color_enabled': self.color_chk.isChecked(),
+                'use_scaled': self.use_scaled_chk.isChecked(),
             }
             self.adata.write_h5ad(str(out_file))
             self.log(f'[EXPORT] Saved AnnData to {out_file}')
@@ -1182,6 +1229,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.y_feature_combo.setCurrentIndex(idx)
                 self.x_log_chk.setChecked(settings.get('x_log', False))
                 self.y_log_chk.setChecked(settings.get('y_log', False))
+                self.use_scaled_chk.setChecked(settings.get('use_scaled', True))
             
             self._update_feature_coords()
             self._toggle_color_controls(self.color_chk.checkState().value)
