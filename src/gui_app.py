@@ -53,9 +53,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Data source controls at top
         data_group = QtWidgets.QGroupBox('Data Sources')
         data_grid = QtWidgets.QGridLayout(data_group)
+        data_grid.setContentsMargins(6, 3, 6, 5)
         data_grid.setHorizontalSpacing(6)
         data_grid.setVerticalSpacing(6)
-        layout.addWidget(data_group, stretch=0)
+        data_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
 
         # Path fields with browse buttons
         self.features_path = QtWidgets.QLineEdit(r'C:\Users\royno\Desktop\test\6_65_allstains_1.txt')
@@ -76,17 +77,27 @@ class MainWindow(QtWidgets.QMainWindow):
         load_btn.clicked.connect(self.load_data)
         load_h5ad_btn = QtWidgets.QPushButton('Load H5AD')
         load_h5ad_btn.clicked.connect(self.load_adata_file)
+        reset_btn = QtWidgets.QPushButton('RESET')
+        reset_btn.clicked.connect(self.reset_data)
 
-        # Vertical button column: Load Data on top, Load H5AD below
-        btn_layout = QtWidgets.QVBoxLayout()
-        btn_layout.setSpacing(6)
-        btn_layout.addWidget(load_btn)
-        btn_layout.addWidget(load_h5ad_btn)
+        # Compact right-side control stack: name prefix above the action buttons.
+        action_panel = QtWidgets.QWidget()
+        action_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        action_layout = QtWidgets.QVBoxLayout(action_panel)
+        action_layout.setContentsMargins(0, 2, 0, 0)
+        action_layout.setSpacing(6)
+
+        self.name_prefix = QtWidgets.QLineEdit('')
+        self.name_prefix.setPlaceholderText('Name')
+        action_layout.addWidget(self.name_prefix)
+        action_layout.addWidget(load_btn)
+        action_layout.addWidget(load_h5ad_btn)
+        action_layout.addWidget(reset_btn)
 
         data_grid.addWidget(QtWidgets.QLabel('Features:'), 0, 0)
         data_grid.addWidget(self.features_path, 0, 1)
         data_grid.addWidget(feat_browse, 0, 2)
-        data_grid.addLayout(btn_layout, 0, 3, 5, 1)
+        data_grid.addWidget(action_panel, 0, 3, 4, 1)
 
         data_grid.addWidget(QtWidgets.QLabel('Images:'), 1, 0)
         data_grid.addWidget(self.images_path, 1, 1)
@@ -100,14 +111,9 @@ class MainWindow(QtWidgets.QMainWindow):
         data_grid.addWidget(self.output_path, 3, 1)
         data_grid.addWidget(out_browse, 3, 2)
 
-        data_grid.addWidget(QtWidgets.QLabel('Name prefix:'), 4, 0)
-        self.name_prefix = QtWidgets.QLineEdit('')
-        self.name_prefix.setPlaceholderText('optional')
-        data_grid.addWidget(self.name_prefix, 4, 1, 1, 2)
-
         self._apply_startup_config()
 
-        # Main content split: left (controls + images), right (plots + log)
+        # Main content split: Left (Controls/Log), Right (Plots/Images)
         body_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         layout.addWidget(body_splitter, stretch=1)
 
@@ -117,29 +123,36 @@ class MainWindow(QtWidgets.QMainWindow):
         left_layout.setSpacing(8)
         body_splitter.addWidget(left_panel)
 
+        # Put data sources in the left column so it doesn't span the full window width.
+        left_layout.addWidget(data_group, stretch=0)
+
         right_panel = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
         body_splitter.addWidget(right_panel)
-        body_splitter.setSizes([520, 900])
+        body_splitter.setStretchFactor(0, 1)
+        body_splitter.setStretchFactor(1, 2)
+        body_splitter.setSizes([380, 1020])
 
         # Analysis controls: only UMAP features + compute button
-        controls_group = QtWidgets.QGroupBox('Analysis Controls')
+        controls_group = QtWidgets.QGroupBox('Features for UMAP')
         controls_grid = QtWidgets.QGridLayout(controls_group)
-        controls_grid.setHorizontalSpacing(6)
-        controls_grid.setVerticalSpacing(6)
+        controls_grid.setContentsMargins(6, 3, 6, 5)
+        controls_grid.setHorizontalSpacing(8)
+        controls_grid.setVerticalSpacing(8)
         controls_grid.setColumnStretch(0, 0)
         controls_grid.setColumnStretch(1, 1)
         controls_grid.setColumnStretch(2, 0)
-        left_layout.addWidget(controls_group, stretch=0)
+        controls_grid.setRowStretch(0, 1)
+        controls_grid.setRowStretch(2, 0)
+        left_layout.addWidget(controls_group, stretch=1)
 
         # Feature selection
         self.feature_list = QtWidgets.QListWidget()
         self.feature_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
-        self.feature_list.setMinimumHeight(170)
-        controls_grid.addWidget(QtWidgets.QLabel('Features for UMAP:'), 0, 0, 1, 3)
-        controls_grid.addWidget(self.feature_list, 1, 0, 1, 3)
+        self.feature_list.setMinimumHeight(150)
+        controls_grid.addWidget(self.feature_list, 0, 0, 1, 3)
 
         umap_btn = QtWidgets.QPushButton('Compute UMAP')
         umap_btn.clicked.connect(self.compute_umap)
@@ -150,12 +163,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Visualization controls
         viz_group = QtWidgets.QGroupBox('Visualization Controls')
         viz_grid = QtWidgets.QGridLayout(viz_group)
-        viz_grid.setHorizontalSpacing(6)
-        viz_grid.setVerticalSpacing(6)
+        viz_grid.setContentsMargins(6, 3, 6, 5)
+        viz_grid.setHorizontalSpacing(8)
+        viz_grid.setVerticalSpacing(8)
         viz_grid.setColumnStretch(0, 0)
         viz_grid.setColumnStretch(1, 1)
         viz_grid.setColumnStretch(2, 0)
-        left_layout.addWidget(viz_group, stretch=0)
+        # viz_group will be added to left_layout after image panel
 
         # Color options (on by default)
         self.color_chk = QtWidgets.QCheckBox('Color UMAP by feature')
@@ -213,8 +227,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dapi_max_label = QtWidgets.QLabel('1.00x')
         viz_grid.addWidget(self.dapi_max_label, 6, 2)
         self._update_dapi_window_labels()
-
-        # wire color controls
+        
+        # Visualization controls will be added to left_layout after image panel below
         self.color_chk.stateChanged.connect(self._toggle_color_controls)
         self.color_combo.currentIndexChanged.connect(lambda _: self.update_umap_colors())
         self.p99_chk.stateChanged.connect(lambda _: self.update_umap_colors())
@@ -230,10 +244,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.display_df = None
         self._toggle_color_controls(self.color_chk.checkState().value)
 
-        # Image panel: 1 column x 3 rows
+        # Plot panel (right panel) should be on top.
+        plots_group = QtWidgets.QGroupBox('UMAP and Feature Scatter')
+        plots_layout = QtWidgets.QVBoxLayout(plots_group)
+        right_layout.addWidget(plots_group, stretch=3)
+        self.fig = Figure(figsize=(10, 6))
+        self.canvas = FigureCanvas(self.fig)
+        plots_layout.addWidget(self.canvas)
+        self.plot_grid = self.fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.10], wspace=0.18)
+        self.ax_umap = self.fig.add_subplot(self.plot_grid[0, 0])
+        self.ax_feat = self.fig.add_subplot(self.plot_grid[0, 1])
+        self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
+        self.colorbar_ax.set_axis_off()
+        self.canvas.mpl_connect('button_press_event', self.on_click)
+
+        # Selected cells below the plots, taking the bottom-right area.
         image_group = QtWidgets.QGroupBox('Selected Cell Images')
         image_layout = QtWidgets.QHBoxLayout(image_group)
-        left_layout.addWidget(image_group, stretch=1)
+        right_layout.addWidget(image_group, stretch=2)
         self.img_fig = Figure(figsize=(12, 5.8))
         self.img_canvas = FigureCanvas(self.img_fig)
         image_layout.addWidget(self.img_canvas, stretch=1)
@@ -258,44 +286,40 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.show_scalebar_chk.stateChanged.connect(self._refresh_selected_images)
 
+        # Left panel: visualization controls, save panel, then status log.
+        left_layout.addWidget(viz_group, stretch=0)
+
         save_group = QtWidgets.QGroupBox('Save')
-        save_layout = QtWidgets.QVBoxLayout(save_group)
-        save_layout.setContentsMargins(8, 8, 8, 8)
-        save_layout.setSpacing(6)
+        save_layout = QtWidgets.QGridLayout(save_group)
+        save_layout.setContentsMargins(6, 3, 6, 5)
+        save_layout.setHorizontalSpacing(6)
+        save_layout.setVerticalSpacing(6)
+
         self.save_img_btn = QtWidgets.QPushButton('Save Cell Images')
         self.save_img_btn.clicked.connect(self.save_current_cell_images)
         self.save_img_btn.setEnabled(False)
         self.save_adata_btn = QtWidgets.QPushButton('Save AnnData (.h5ad)')
         self.save_adata_btn.clicked.connect(self.save_adata)
         self.save_adata_btn.setEnabled(False)
-        save_layout.addWidget(self.save_img_btn)
-        save_layout.addWidget(self.save_adata_btn)
+        self.save_plots_btn = QtWidgets.QPushButton('Save Plots')
+        self.save_plots_btn.clicked.connect(self.save_plots)
+        self.save_plots_btn.setEnabled(False)
+
+        save_layout.addWidget(self.save_img_btn, 0, 0)
+        save_layout.addWidget(self.save_adata_btn, 0, 1)
+        save_layout.addWidget(self.save_plots_btn, 0, 2)
         left_layout.addWidget(save_group, stretch=0)
 
-        # Plot panel
-        plots_group = QtWidgets.QGroupBox('UMAP and Feature Scatter')
-        plots_layout = QtWidgets.QVBoxLayout(plots_group)
-        right_layout.addWidget(plots_group, stretch=1)
-        self.fig = Figure(figsize=(10, 6))
-        self.canvas = FigureCanvas(self.fig)
-        plots_layout.addWidget(self.canvas)
-        self.plot_grid = self.fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.10], wspace=0.18)
-        self.ax_umap = self.fig.add_subplot(self.plot_grid[0, 0])
-        self.ax_feat = self.fig.add_subplot(self.plot_grid[0, 1])
-        self.colorbar_ax = self.fig.add_subplot(self.plot_grid[0, 2])
-        self.colorbar_ax.set_axis_off()
-        self.canvas.mpl_connect('button_press_event', self.on_click)
-
-        # Status / log panel (right side only)
         status_group = QtWidgets.QGroupBox('Status Log')
         status_layout = QtWidgets.QVBoxLayout(status_group)
-        right_layout.addWidget(status_group, stretch=0)
+        status_layout.setContentsMargins(6, 3, 6, 5)
         self.status_box = QtWidgets.QTextEdit()
         self.status_box.setReadOnly(True)
-        self.status_box.setFixedHeight(120)
+        self.status_box.setFixedHeight(64)
         status_layout.addWidget(self.status_box)
+        left_layout.addWidget(status_group, stretch=1)
 
-        # Internal
+        # Internal (already defined)
         self.df = None
         self.adata = None
         self.coords = None
@@ -396,19 +420,29 @@ class MainWindow(QtWidgets.QMainWindow):
             if col == 'Object Number' or col.endswith('_path'):
                 continue
             new_col = col
+            # Handle specific aliases first
             for alias, friendly in channel_aliases.items():
                 pattern = re.compile(rf'(^|[^0-9A-Za-z]){re.escape(alias)}(?=$|[^0-9A-Za-z])', re.IGNORECASE)
-
                 def _sub(match):
                     return f'{match.group(1)}{friendly}'
-
                 new_col = pattern.sub(_sub, new_col)
+            
+            # Additional cleanup for width_2, width_3 patterns
+            # If user has "width_2 BF", and BF is already in string, we might want to clean up trailing markers
+            new_col = re.sub(r'(?i)[_\s-]+(?:ch|m)\d{1,2}(?=$|[^0-9A-Za-z])', '', new_col)
+            
+            # Handle specific cases like width_2, width_3 etc
+            # If the column name contains "width_#" and we have a channel match, 
+            # the aliases above usually handle "ch# -> Friendly".
+            # The user specifically mentioned "width_2, width, width_3"
+            
             new_col = re.sub(r'\s+', ' ', new_col).strip()
             for friendly in sorted(set(channel_aliases.values()) | {'BF', 'DAPI'}, key=len, reverse=True):
                 dup_pattern = re.compile(
                     rf'(?i)(?:(?<=^)|(?<=[_\s-])){re.escape(friendly)}(?:[_\s-]+{re.escape(friendly)})+'
                 )
                 new_col = dup_pattern.sub(friendly, new_col)
+            
             if new_col != col:
                 candidate = new_col
                 suffix = 2
@@ -419,7 +453,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 used.add(candidate)
         if rename_map:
             df = df.rename(columns=rename_map)
-            self.log(f'[LOAD] Renamed {len(rename_map)} feature columns (_M1->BF, M07_DAPI->DAPI)')
+            self.log(f'[LOAD] Renamed {len(rename_map)} feature columns')
         return df
 
     def _add_area_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -559,6 +593,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.color_combo.addItem(col)
             self.x_feature_combo.addItem(col)
             self.y_feature_combo.addItem(col)
+
+        # Select all features by default for UMAP analysis
+        try:
+            self.feature_list.selectAll()
+        except Exception:
+            # Fallback: manually select each item
+            for i in range(self.feature_list.count()):
+                it = self.feature_list.item(i)
+                if it:
+                    it.setSelected(True)
 
         enabled = (self.display_df is not None) and self.color_chk.isChecked()
         self.color_combo.setEnabled(enabled)
@@ -715,8 +759,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_feature_coords()
             self._redraw_plots()
             self.log('[UMAP] Completed successfully')
-            # enable save adata
+            # enable save buttons
             self.save_adata_btn.setEnabled(True)
+            self.save_plots_btn.setEnabled(True)
         except Exception as e:
             self.log(f'[ERROR] UMAP failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'UMAP error', str(e))
@@ -801,10 +846,14 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         else:
             sca = self.ax_feat.scatter(self.feat_coords[:, 0], self.feat_coords[:, 1], s=14, c='0.35', alpha=0.9, picker=True)
-        x_label = f'log1p({x_name})' if self.x_log_chk.isChecked() else x_name
-        y_label = f'log1p({y_name})' if self.y_log_chk.isChecked() else y_name
+        scaled_suffix = ' (scaled)' if self.use_scaled_chk.isChecked() else ''
+        x_base = f'{x_name}{scaled_suffix}'
+        y_base = f'{y_name}{scaled_suffix}'
+        x_label = f'log1p({x_base})' if self.x_log_chk.isChecked() else x_base
+        y_label = f'log1p({y_base})' if self.y_log_chk.isChecked() else y_base
         self.ax_feat.set_xlabel(x_label)
         self.ax_feat.set_ylabel(y_label)
+        self.ax_feat.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
         return sca
 
     def _get_color_feature_values(self):
@@ -844,13 +893,22 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 self.colorbar_ax.set_axis_on()
                 self.colorbar = self.fig.colorbar(mappable, cax=self.colorbar_ax)
-                self.colorbar.set_label(feat_name)
+                label = feat_name
+                if self.use_scaled_chk.isChecked():
+                    label += ' (scaled)'
+                self.colorbar.set_label(label)
             except Exception:
                 self.colorbar = None
 
     def _redraw_plots(self):
         self.ax_umap.clear()
         self.ax_feat.clear()
+        if self.colorbar_ax is not None:
+            self.colorbar_ax.clear()
+            self.colorbar_ax.set_axis_on()
+            self.colorbar_ax.set_xticks([])
+            self.colorbar_ax.set_yticks([])
+            self.colorbar_ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
         if self.coords is None:
             self.ax_umap.text(0.5, 0.5, 'UMAP not computed yet', ha='center', va='center', transform=self.ax_umap.transAxes)
             self.ax_umap.set_xticks([])
@@ -861,6 +919,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.umap_scatter = self._draw_umap_scatter()
         if self.display_df is not None:
             self.feat_scatter = self._draw_feature_scatter()
+            # If UMAP not computed, draw colorbar for feature scatter
+            if self.coords is None and self.feat_scatter is not None:
+                feat_name = self.color_combo.currentText().strip() if self.color_chk.isChecked() else ''
+                self._draw_colorbar(self.feat_scatter, feat_name)
         else:
             self.ax_feat.set_xticks([])
             self.ax_feat.set_yticks([])
@@ -924,7 +986,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._redraw_plots()
 
     def on_click(self, event):
+        # Unselect if clicking outside plots
         if event.inaxes not in (self.ax_umap, self.ax_feat):
+            # Remove markers manually
+            if self.selection_marker_umap is not None:
+                try:
+                    self.selection_marker_umap.remove()
+                except Exception:
+                    pass
+            if self.selection_marker_feat is not None:
+                try:
+                    self.selection_marker_feat.remove()
+                except Exception:
+                    pass
+            self.selection_marker_umap = None
+            self.selection_marker_feat = None
+            self.current_index = None
+            self.canvas.draw()
+            self._show_empty_images('')
+            self.save_img_btn.setEnabled(False)
             return
         x, y = event.xdata, event.ydata
         if x is None or y is None:
@@ -1170,6 +1250,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log(f'[ERROR] Saving AnnData failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'Save error', str(e))
 
+    def save_plots(self):
+        """Save the current UMAP and feature scatter plots as PNG/PDF."""
+        if self.fig is None:
+            QtWidgets.QMessageBox.warning(self, 'No plots', 'No plots available to save')
+            return
+        out_dir = Path(self.output_path.text())
+        out_dir.mkdir(parents=True, exist_ok=True)
+        prefix = self._feature_prefix()
+        try:
+            # Save as PNG
+            plot_png = out_dir / f'{prefix}plots.png'
+            self.fig.savefig(str(plot_png), dpi=150, bbox_inches='tight')
+            self.log(f'[EXPORT] Saved plots to {plot_png}')
+        except Exception as e:
+            self.log(f'[ERROR] Saving plots failed: {e}')
+            QtWidgets.QMessageBox.critical(self, 'Save error', str(e))
+
     def load_adata_file(self):
         """Load a previously saved h5ad file with UMAP and display settings."""
         fn, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -1236,11 +1333,81 @@ class MainWindow(QtWidgets.QMainWindow):
             self._redraw_plots()
             self.canvas.draw()
             self.save_adata_btn.setEnabled(True)
-            self.save_img_btn.setEnabled(True)
+            self.save_plots_btn.setEnabled(True)
             self.log(f'[H5AD] Loaded successfully; UMAP ready')
         except Exception as e:
             self.log(f'[ERROR] Loading H5AD failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'Load H5AD error', str(e))
+
+    def reset_data(self):
+        """Clear loaded data and reset UI so a new dataset can be loaded."""
+        self.log('[RESET] Clearing loaded data and UI state')
+        # Clear core data structures
+        try:
+            self.df = None
+        except Exception:
+            pass
+        try:
+            self.adata = None
+        except Exception:
+            pass
+        self.display_df = None
+        self.coords = None
+        self.feat_coords = None
+        self.nn_umap = None
+        self.nn_feat = None
+        self.feat_coords_nn = None
+
+        # Clear selection markers
+        try:
+            if self.selection_marker_umap is not None:
+                try:
+                    self.selection_marker_umap.remove()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if self.selection_marker_feat is not None:
+                try:
+                    self.selection_marker_feat.remove()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self.selection_marker_umap = None
+        self.selection_marker_feat = None
+        self.current_index = None
+
+        # Clear UI lists and controls
+        try:
+            self.feature_list.clear()
+            self.color_combo.clear()
+            self.x_feature_combo.clear()
+            self.y_feature_combo.clear()
+        except Exception:
+            pass
+
+        # Clear images and plots
+        try:
+            self._show_empty_images('')
+        except Exception:
+            pass
+        try:
+            self._redraw_plots()
+            self.canvas.draw()
+        except Exception:
+            pass
+
+        # Disable save buttons
+        try:
+            self.save_img_btn.setEnabled(False)
+            self.save_adata_btn.setEnabled(False)
+            self.save_plots_btn.setEnabled(False)
+        except Exception:
+            pass
+
+        self.log('[RESET] Ready for new upload')
 
 
 
