@@ -289,6 +289,20 @@ class MainWindow(QtWidgets.QMainWindow):
         # Left panel: visualization controls, save panel, then status log.
         left_layout.addWidget(viz_group, stretch=0)
 
+        find_group = QtWidgets.QGroupBox('Find Cell')
+        find_layout = QtWidgets.QGridLayout(find_group)
+        find_layout.setContentsMargins(6, 3, 6, 5)
+        find_layout.setHorizontalSpacing(6)
+        find_layout.setVerticalSpacing(6)
+        self.find_cell_entry = QtWidgets.QLineEdit()
+        self.find_cell_entry.setPlaceholderText('Object Number')
+        self.find_cell_entry.returnPressed.connect(self.find_cell)
+        find_btn = QtWidgets.QPushButton('Find')
+        find_btn.clicked.connect(self.find_cell)
+        find_layout.addWidget(self.find_cell_entry, 0, 0)
+        find_layout.addWidget(find_btn, 0, 1)
+        left_layout.addWidget(find_group, stretch=0)
+
         save_group = QtWidgets.QGroupBox('Save')
         save_layout = QtWidgets.QGridLayout(save_group)
         save_layout.setContentsMargins(6, 3, 6, 5)
@@ -315,7 +329,8 @@ class MainWindow(QtWidgets.QMainWindow):
         status_layout.setContentsMargins(6, 3, 6, 5)
         self.status_box = QtWidgets.QTextEdit()
         self.status_box.setReadOnly(True)
-        self.status_box.setFixedHeight(64)
+        self.status_box.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+        self.status_box.setMinimumHeight(180)
         status_layout.addWidget(self.status_box)
         left_layout.addWidget(status_group, stretch=1)
 
@@ -368,35 +383,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_data(self):
         self.log('[LOADING DATA] Starting')
-        feats = Path(self.features_path.text())
-        imgs = Path(self.images_path.text())
-        cmap = Path(self.channel_map_path.text())
-        channel_map = load_channel_map(cmap)
-        # ensure channel_map is available as an attribute before any method
-        # that may reference it (e.g. _rename_feature_columns)
-        self.channel_map = channel_map
-        df = load_features_table(feats)
-        df = index_images(imgs, df, channel_map)
-        df = self._rename_feature_columns(df)
-        df = self._filter_features_by_available_channels(df)
-        df = self._add_area_ratios(df)
-        df = self._add_length_width_ratios(df)
-        # filter to only rows that have at least one channel path
-        path_cols = [str(ch) + '_path' for ch in channel_map.values()]
-        available_mask = df[path_cols].notna().any(axis=1)
-        df_filtered = df[available_mask].reset_index(drop=True)
-        # count available image paths and rows
-        found_counts = int(df_filtered[path_cols].notna().sum().sum())
-        rows_with_images = int(df_filtered.shape[0])
-        self.df = df_filtered
-        self.display_df = self.df.reset_index(drop=True)
-        self.log(f'[LOADED] {len(df)} objects; {rows_with_images} objects have at least one image; total channel paths found: {found_counts}')
-        self._populate_feature_controls()
-        self._update_feature_coords()
-        self._redraw_plots()
-        self.canvas.draw()
-        QtCore.QCoreApplication.processEvents()
-        self._estimate_dapi_scale()
+        try:
+            feats = Path(self.features_path.text())
+            imgs = Path(self.images_path.text())
+            cmap = Path(self.channel_map_path.text())
+            channel_map = load_channel_map(cmap)
+            # ensure channel_map is available as an attribute before any method
+            # that may reference it (e.g. _rename_feature_columns)
+            self.channel_map = channel_map
+            df = load_features_table(feats)
+            df = index_images(imgs, df, channel_map)
+            df = self._rename_feature_columns(df)
+            df = self._filter_features_by_available_channels(df)
+            df = self._add_area_ratios(df)
+            df = self._add_length_width_ratios(df)
+            # filter to only rows that have at least one channel path
+            path_cols = [str(ch) + '_path' for ch in channel_map.values()]
+            available_mask = df[path_cols].notna().any(axis=1)
+            df_filtered = df[available_mask].reset_index(drop=True)
+            # count available image paths and rows
+            found_counts = int(df_filtered[path_cols].notna().sum().sum())
+            rows_with_images = int(df_filtered.shape[0])
+            self.df = df_filtered
+            self.display_df = self.df.reset_index(drop=True)
+            self.log(f'[LOADED] {len(df)} objects; {rows_with_images} objects have at least one image; total channel paths found: {found_counts}')
+            self._populate_feature_controls()
+            self._update_feature_coords()
+            self._redraw_plots()
+            self.canvas.draw()
+            QtCore.QCoreApplication.processEvents()
+            self._estimate_dapi_scale()
+        except FileNotFoundError as e:
+            self.log(f'[ERROR] {e}')
+            QtWidgets.QMessageBox.warning(self, 'Load failed', str(e))
+        except Exception as e:
+            self.log(f'[ERROR] Failed to load data: {e}')
+            QtWidgets.QMessageBox.critical(self, 'Load error', str(e))
 
     def _rename_feature_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         rename_map = {}
@@ -658,6 +680,48 @@ class MainWindow(QtWidgets.QMainWindow):
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self.status_box.append(f'[{ts}] {msg}')
+
+    def _set_find_cell_error(self, has_error: bool) -> None:
+        if has_error:
+            self.find_cell_entry.setStyleSheet('QLineEdit { border: 1px solid #c62828; background-color: #ffebee; color: #1f1f1f; }')
+        else:
+            self.find_cell_entry.setStyleSheet('')
+
+    def find_cell(self):
+        if self.display_df is None:
+            self.log('[FIND] No data loaded')
+            self._set_find_cell_error(True)
+            return
+
+        query = self.find_cell_entry.text().strip()
+        if not query:
+            self._set_find_cell_error(True)
+            self.log('[FIND] Enter an Object Number to search')
+            return
+
+        object_col = self.display_df.get('Object Number')
+        if object_col is None:
+            self._set_find_cell_error(True)
+            self.log('[FIND] Object Number column is missing')
+            return
+
+        normalized_query = query.strip().lower()
+        matches = []
+        for idx, value in enumerate(object_col.astype(str).tolist()):
+            if value.strip().lower() == normalized_query:
+                matches.append(idx)
+
+        if not matches:
+            self._set_find_cell_error(True)
+            self.log(f'[FIND] No cell found for Object Number: {query}')
+            return
+
+        self._set_find_cell_error(False)
+        self._select_index(matches[0])
+        if len(matches) > 1:
+            self.log(f'[FIND] Found {len(matches)} matches for {query}; selected the first')
+        else:
+            self.log(f'[FIND] Selected cell {query}')
 
     def browse_features(self):
         fn, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Select features file', str(Path('.')), 'Text files (*.txt *.tsv);;All files (*)')
@@ -1335,6 +1399,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.save_adata_btn.setEnabled(True)
             self.save_plots_btn.setEnabled(True)
             self.log(f'[H5AD] Loaded successfully; UMAP ready')
+        except FileNotFoundError as e:
+            self.log(f'[ERROR] {e}')
+            QtWidgets.QMessageBox.warning(self, 'Load H5AD failed', str(e))
         except Exception as e:
             self.log(f'[ERROR] Loading H5AD failed: {e}')
             QtWidgets.QMessageBox.critical(self, 'Load H5AD error', str(e))
