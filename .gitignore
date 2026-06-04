@@ -37,3 +37,7 @@ output/
 
 # Logs
 *.log
+/dist
+build/
+image_stream_analysis.spec
+*.exe
